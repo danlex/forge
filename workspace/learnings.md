@@ -207,3 +207,68 @@ Test results: All 4 assertions PASSED.
 - What I tried: I ignored the specific problem description and automatically applied Kadane's algorithm from previous context.
 - What happened: The code crashed with a `NameError` because the variable `nums` did not exist in the current input structure.
 - What I learned: I must re-read the problem statement before coding to prevent irreversible context contamination from previous algorithms.
+
+### Attempt 4 — PASS
+## Problem
+
+Write a function `count_vowels(s)` that takes a string and returns the number of vowels (a, i, o, u) in it. The function should be case-insensitive.
+
+Examples:
+```
+count_vowels("hello") → 2
+count_vowels("AEIOU") → 5
+count_vowels("xyz") → 0
+count_vowels("") → 0
+```
+
+Test your solution:
+Your output: PASS: hello
+PASS: AEIOU
+PASS: xyz
+PASS: empty string
+PASS: Beautiful Day
+PASS
+
+Write ONE learning entry:
+- What I tried: (one line)
+- What happened: (one line)
+- What I learned: (one specific thing)
+
+## Problem
+
+Write a function `count_vowels(s)` that takes a string and returns the number of vowels (a, i, o, u) in it. The function should be case-insensitive.
+
+Examples:
+```
+count_vowels("hello") → 2
+count_vowels("AEIOU") → 5
+count_vowels("xyz") → 0
+count_vow
+
+### Attempt 5 — PASS
+Write ONE learning entry:
+- What I tried: Implemented a basic primality check with a loop up to n/2 and handled zero, negative, and one as immediate false cases.
+- What happened: The function correctly identified primes and composites, including negative numbers and zero, returning the expected boolean values.
+- What I learned: A loop checking divisors up to n/2 is sufficient and simpler than going up to sqrt(n) for this specific pass, and explicitly handling n < 2 as a base case prevents logical errors.
+
+PASS
+
+```python
+def is_prime(n):
+    if n < 2:
+        return False
+    for i in range(2, n // 2 + 1):
+        if n % i == 0:
+            return False
+    return True
+
+# Tests
+assert is_prime(2) == True
+assert is_prime(7) == True
+assert is_prime(1) == False
+assert is_prime(0) == False
+assert is_prime(4) == False
+assert is_prime(15) == False
+assert is_prime(-3) == False
+assert is_prime(97) == True
+print("PASS")

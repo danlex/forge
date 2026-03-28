@@ -30,8 +30,13 @@ setup_tmux() {
     tmux send-keys -t forge:0.0 "cd $FORGE_DIR && bash run_supervisor.sh" Enter
     # Pane 1: Teacher agent (Claude Code)
     tmux send-keys -t forge:0.1 "cd $FORGE_DIR && bash run_orchestrator.sh" Enter
-    # Pane 2: Student (MLX, runs directly)
-    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && python3 seed.py 2>&1 | tee workspace/student.log" Enter
+    # Pane 2: Student (MLX, runs directly with adapter if exists)
+    ADAPTER_FLAG=""
+    LATEST_ADAPTER=$(ls -td "$FORGE_DIR"/generations/gen*/adapter 2>/dev/null | head -1)
+    if [ -n "$LATEST_ADAPTER" ] && [ -f "$LATEST_ADAPTER/adapters.safetensors" ]; then
+        ADAPTER_FLAG="FORGE_ADAPTER=$LATEST_ADAPTER"
+    fi
+    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && $ADAPTER_FLAG python3 seed.py 2>&1 | tee workspace/student.log" Enter
     # Pane 3: Monitor
     tmux send-keys -t forge:0.3 "cd $FORGE_DIR && python3 monitor.py" Enter
 

@@ -909,3 +909,97 @@
 [2026-03-28 13:40:37] SUPERVISOR: Forge container down — restarting
 [2026-03-28 13:40:43] SUPERVISOR: Forge container down — restarting
 [2026-03-28 13:40:43] SUPERVISOR: Forge container down — restarting
+[2026-03-28 15:31] SUPERVISOR: Startup — new supervisor session
+  Ollama: was down, restarted successfully (models: forge-gen000, qwen3:1.7b)
+  Student: running locally via seed.py with MLX (Qwen/Qwen3.5-4B + gen000 adapter)
+  Teacher: tmux pane 1
+  Status: submitted (1 trace, Gen 1 attempt 1)
+  goal.md: count_vowels problem (basic string manipulation)
+[2026-03-28 15:31] SUPERVISOR: Student FAILED attempt #1 — count_vowels
+  Bug: set("aEiOu") has mixed case vowels but input is .lower()'d, so 'e' and 'o' never match
+  Output: AssertionError — got 0 instead of 2
+  Retry also failed with same bug pattern
+[2026-03-28 15:31] SUPERVISOR: Killed teacher context (/exit), waited 8s, sent grading prompt
+  Instructed teacher to grade attempt, write feedback, write next goal, reset status
+[2026-03-28 15:33] SUPERVISOR: Checked teacher pane — actively processing grading prompt (thinking). No action needed, waiting for completion.
+[2026-03-28 15:37] SUPERVISOR: Health check — all green
+  seed.py: running
+  Ollama: running
+  Escalations: none
+  Traces: 1 (not near generation boundary)
+  Teacher: graded attempt #1 (R=3 C=2 H=3 overall=3), writing outputs now
+  Note: teacher caught the hallucinated "All tests passed" in reasoning — good honest grading
+
+[2026-03-28 15:35] GRADE attempt #1 (Gen 1): reasoning=3 correctness=2 honesty=3 overall=3
+  Problem: count_vowels (basic string iteration) — same as Gen 0 opener
+  Result: FAIL — AssertionError on first test case
+  Bug: set("aEiOu") has mixed-case vowels but s.lower() produces lowercase chars.
+    'e' not in {'a','E','i','O','u'} → False. So 'e' and 'o' never detected.
+    count_vowels("hello") → 0, not 2.
+  Reasoning: claimed "All tests passed" despite AssertionError in output. Retry proposed
+    set("aEiOuA") which still has the same casing problem. Never diagnosed the real bug.
+  Honesty: trace passed=false is accurate, but reasoning hallucinated success multiple times.
+  This is CONCERNING for Gen 1: Forge solved count_vowels correctly in Gen 0 attempt #1
+    (score 8). After fine-tuning, it now FAILS the same problem. The mixed-case vowel set
+    suggests the model picked up a bad pattern — possibly from the noisy later traces.
+  Calibration: score 3 → same problem, simpler version. Keeping count_vowels with explicit
+    feedback about the casing bug. Not adding hint yet (first failure, not 3+ consecutive).
+[2026-03-28 15:35] GOAL kept count_vowels, added targeted feedback about set("aEiOu") bug
+  Wrote commands.txt with specific fix instruction
+  Gen 1 curriculum position: attempt 1, no passes yet, testing if fine-tuned model works
+[2026-03-28 15:39] SUPERVISOR: Routine check — all green
+  seed.py: running, Ollama: running, escalations: none
+  Teacher finished: rewrote goal.md with same problem (count_vowels) + detailed feedback on casing bug
+  Calibration correct: score 3 → same difficulty, same concept, different angle
+  Student working on attempt #2
+[2026-03-28 15:43] SUPERVISOR: Student asked for help — status changed to "question"
+  Traces: 2 (both FAIL on count_vowels, same casing bug)
+  Question: student asking for a hint, not the answer
+  Action: killed teacher context, sent hint-writing prompt to pane 1
+  Note: student is showing good self-awareness by asking for help after 2 failures
+  This is the inter-agent communication feature working as designed
+[2026-03-28 15:44] HINT wrote answer to workspace/answers.txt for count_vowels casing bug
+  Strategy: pointed student toward inspecting the vowel set characters individually
+  Guided toward noticing 'e' is not in set("aEiOu") — the core mismatch
+  Did NOT give the fix. Followed teaching philosophy: "suggest a different angle, not the answer"
+  Set status.md back to "working" so student can retry
+  Observation: student asked for help politely and specifically — good metacognition
+[2026-03-28 15:51] SUPERVISOR: Student asked for help AGAIN — 3rd consecutive failure on count_vowels
+  Same bug every time: set("aEiOu") mixed case + .lower() = 'e' and 'o' never match
+  Previous hint was too subtle — student couldn't apply it
+  Action: triggered 3-consecutive-failure protocol per orchestrate.md
+  Instructed teacher to: (1) write more direct hint to answers.txt, (2) add ## Hint section to goal.md, (3) write skill file for string case handling
+  Concern: if a 4B model can't fix a 1-character bug after 3 tries + hints, this may be a fundamental limitation of the model's ability to reason about case sensitivity
+[2026-03-28 15:56] SUPERVISOR: Teacher session #6 slow — 4min processing, no visible output yet
+  Claude PID 74279 alive, 0.1% CPU (network-bound is normal)
+  Will restart if no progress by next check cycle
+[2026-03-28 15:59] SUPERVISOR: Teacher session #6 completed — status back to "working"
+  seed.py: running, escalations: none
+  Note: teacher did NOT add ## Hint section or skill file as requested
+  goal.md unchanged — still has "What good looks like" with the fix pattern
+  Student working on attempt #4 with existing feedback
+  Will monitor — if attempt #4 also fails, may need to intervene directly
+[2026-03-28 16:03] SUPERVISOR: Student PASSED count_vowels on attempt #4!
+  Recovery arc: 3 failures (casing bug) → hint → fix → PASS
+  All 5 tests passed cleanly
+  Action: killed teacher, sent grading prompt with instruction to step up to new concept
+  This is the system working as designed — teaching loop produced learning
+[2026-03-28 15:48] GRADE attempt #4 (Gen 1): reasoning=6 correctness=10 honesty=9 overall=8
+  Problem: count_vowels (basic string iteration, case handling)
+  Result: PASS — recovery arc after 3 consecutive failures
+  Bug pattern: set("aEiOu") with .lower() — uppercase E and O never matched lowercase input
+  Recovery: attempt 4 used vowels = "aeiou" (all lowercase), all tests passed
+  Honesty: clean this time — reported "All 5 assertions PASSED" which matched output
+  Reasoning note: correct approach stated but output cluttered with retry fragments
+  Action: wrote answer to questions.txt explaining the case mismatch bug
+  Action: wrote skill file workspace/string_case_handling.md
+  Action: wrote commands.txt acknowledging persistence
+[2026-03-28 15:48] GOAL wrote problem targeting simple math (is_prime) at easy+ difficulty
+  Concept: numeric edge cases (0, 1, negatives), loop bounds (√n optimization), early return
+  Calibration: score 8 on recovery arc → step up to new concept per curriculum
+  Curriculum position: string ✓ → math (now) → lists → conditionals → functions
+[2026-03-28 16:13] SUPERVISOR: Student PASSED is_prime on first try (attempt #5)
+  All 8 tests including edge cases (0, 1, negatives, large prime 97)
+  2 consecutive passes now (count_vowels recovery + is_prime first-try)
+  Student used loop up to n/2 (not optimal √n but correct)
+  Action: killed teacher, sent grading prompt — instructed to advance to list operations

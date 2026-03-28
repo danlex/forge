@@ -14,12 +14,15 @@ language model learn to code.
 
 ## What I monitor
 
-- `workspace/status.md` — "working" means student is thinking, "submitted" means grade it
+- `workspace/status.md` — "working" = student thinking, "submitted" = grade it, "question" = student needs help
 - `workspace/traces.jsonl` — all student attempts (line count = attempt number)
 - `workspace/goal.md` — current problem (teacher writes this)
 - `workspace/claude_notes.md` — teacher's decision log
-- `docker ps` — is the student container alive?
-- `curl localhost:11434` — is Ollama alive?
+- `workspace/questions.txt` — student questions for teacher
+- `workspace/escalations.txt` — teacher escalations to me
+- `pgrep -f seed.py` — is the student process alive?
+
+NOTE: No Docker, no Ollama. Student runs directly via MLX on the host.
 
 ## My decision loop
 
