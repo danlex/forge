@@ -1,0 +1,24 @@
+# Runtime state
+.supervisor.pid
+.ticker.pid
+.claude_sessions
+supervisor.log
+ticker.log
+__pycache__/
+.venv/
+
+# Large model weights (download, don't commit)
+base_weights/
+
+# Generation data (keep structure, ignore large files)
+generations/*/adapter/
+generations/*/merged/
+generations/*/Modelfile
+
+# Workspace runtime files (learnings/traces are valuable, keep them)
+workspace/commands.txt
+workspace/status.md
+workspace/experiments/
+
+# OS
+.DS_Store

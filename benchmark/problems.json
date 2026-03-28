@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "category": "strings",
+    "title": "Reverse words in a sentence",
+    "problem": "Write a function `reverse_words(s)` that takes a string and returns it with the word order reversed. Words are separated by single spaces. No leading/trailing spaces in output.\n\nExamples:\n  reverse_words('hello world') -> 'world hello'\n  reverse_words('the sky is blue') -> 'blue is sky the'\n  reverse_words('a') -> 'a'",
+    "test": "def reverse_words(s):\n    return ' '.join(s.split()[::-1])\n\nassert reverse_words('hello world') == 'world hello'\nassert reverse_words('the sky is blue') == 'blue is sky the'\nassert reverse_words('a') == 'a'\nassert reverse_words('  spaces  everywhere  ') == 'everywhere spaces'\nprint('PASS')"
+  },
+  {
+    "id": 2,
+    "category": "math",
+    "title": "Prime factors of n",
+    "problem": "Write a function `prime_factors(n)` that returns a sorted list of all prime factors of n (with repetition).\n\nExamples:\n  prime_factors(12) -> [2, 2, 3]\n  prime_factors(7) -> [7]\n  prime_factors(100) -> [2, 2, 5, 5]",
+    "test": "def prime_factors(n):\n    factors = []\n    d = 2\n    while d * d <= n:\n        while n % d == 0:\n            factors.append(d)\n            n //= d\n        d += 1\n    if n > 1:\n        factors.append(n)\n    return factors\n\nassert prime_factors(12) == [2, 2, 3]\nassert prime_factors(7) == [7]\nassert prime_factors(100) == [2, 2, 5, 5]\nassert prime_factors(1) == []\nassert prime_factors(2) == [2]\nprint('PASS')"
+  },
+  {
+    "id": 3,
+    "category": "sorting",
+    "title": "Sort without built-in sort",
+    "problem": "Write a function `my_sort(lst)` that sorts a list of integers in ascending order without using built-in sort() or sorted(). Return a new list.\n\nExamples:\n  my_sort([3,1,2]) -> [1,2,3]\n  my_sort([5,4,3,2,1]) -> [1,2,3,4,5]\n  my_sort([]) -> []",
+    "test": "def my_sort(lst):\n    arr = lst[:]\n    for i in range(len(arr)):\n        for j in range(i+1, len(arr)):\n            if arr[j] < arr[i]:\n                arr[i], arr[j] = arr[j], arr[i]\n    return arr\n\nassert my_sort([3,1,2]) == [1,2,3]\nassert my_sort([5,4,3,2,1]) == [1,2,3,4,5]\nassert my_sort([]) == []\nassert my_sort([1]) == [1]\nassert my_sort([2,2,1]) == [1,2,2]\nprint('PASS')"
+  },
+  {
+    "id": 4,
+    "category": "search",
+    "title": "Binary search on sorted list",
+    "problem": "Write a function `binary_search(arr, target)` that returns the index of target in a sorted list, or -1 if not found.\n\nExamples:\n  binary_search([1,3,5,7,9], 5) -> 2\n  binary_search([1,3,5,7,9], 4) -> -1\n  binary_search([], 1) -> -1",
+    "test": "def binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\n\nassert binary_search([1,3,5,7,9], 5) == 2\nassert binary_search([1,3,5,7,9], 4) == -1\nassert binary_search([], 1) == -1\nassert binary_search([1], 1) == 0\nassert binary_search([1,2,3,4,5], 1) == 0\nprint('PASS')"
+  },
+  {
+    "id": 5,
+    "category": "recursion",
+    "title": "Fibonacci with memoization",
+    "problem": "Write a function `fib(n)` that returns the nth Fibonacci number using memoization. fib(0)=0, fib(1)=1.\n\nExamples:\n  fib(0) -> 0\n  fib(10) -> 55\n  fib(30) -> 832040",
+    "test": "def fib(n, memo={}):\n    if n in memo:\n        return memo[n]\n    if n <= 1:\n        return n\n    memo[n] = fib(n-1, memo) + fib(n-2, memo)\n    return memo[n]\n\nassert fib(0) == 0\nassert fib(1) == 1\nassert fib(10) == 55\nassert fib(30) == 832040\nassert fib(50) == 12586269025\nprint('PASS')"
+  },
+  {
+    "id": 6,
+    "category": "dynamic_programming",
+    "title": "Longest common subsequence",
+    "problem": "Write a function `lcs(a, b)` that returns the length of the longest common subsequence of two strings.\n\nExamples:\n  lcs('abcde', 'ace') -> 3\n  lcs('abc', 'def') -> 0\n  lcs('abc', 'abc') -> 3",
+    "test": "def lcs(a, b):\n    m, n = len(a), len(b)\n    dp = [[0]*(n+1) for _ in range(m+1)]\n    for i in range(1, m+1):\n        for j in range(1, n+1):\n            if a[i-1] == b[j-1]:\n                dp[i][j] = dp[i-1][j-1] + 1\n            else:\n                dp[i][j] = max(dp[i-1][j], dp[i][j-1])\n    return dp[m][n]\n\nassert lcs('abcde', 'ace') == 3\nassert lcs('abc', 'def') == 0\nassert lcs('abc', 'abc') == 3\nassert lcs('', 'abc') == 0\nassert lcs('abcbdab', 'bdcab') == 4\nprint('PASS')"
+  },
+  {
+    "id": 7,
+    "category": "graphs",
+    "title": "Count connected components",
+    "problem": "Write a function `count_components(n, edges)` where n is the number of nodes (0 to n-1) and edges is a list of [u,v] pairs. Return the number of connected components.\n\nExamples:\n  count_components(5, [[0,1],[1,2],[3,4]]) -> 2\n  count_components(4, []) -> 4\n  count_components(3, [[0,1],[1,2],[0,2]]) -> 1",
+    "test": "def count_components(n, edges):\n    parent = list(range(n))\n    def find(x):\n        while parent[x] != x:\n            parent[x] = parent[parent[x]]\n            x = parent[x]\n        return x\n    for u, v in edges:\n        pu, pv = find(u), find(v)\n        if pu != pv:\n            parent[pu] = pv\n    return len(set(find(i) for i in range(n)))\n\nassert count_components(5, [[0,1],[1,2],[3,4]]) == 2\nassert count_components(4, []) == 4\nassert count_components(3, [[0,1],[1,2],[0,2]]) == 1\nassert count_components(1, []) == 1\nprint('PASS')"
+  },
+  {
+    "id": 8,
+    "category": "data_structure",
+    "title": "Stack using a list",
+    "problem": "Implement a class `Stack` with methods: push(val), pop() (returns value, raises IndexError if empty), peek() (returns top without removing, raises IndexError if empty), is_empty() (bool), size() (int).\n\nAll operations must be O(1).",
+    "test": "class Stack:\n    def __init__(self):\n        self._data = []\n    def push(self, val):\n        self._data.append(val)\n    def pop(self):\n        if not self._data:\n            raise IndexError('pop from empty stack')\n        return self._data.pop()\n    def peek(self):\n        if not self._data:\n            raise IndexError('peek from empty stack')\n        return self._data[-1]\n    def is_empty(self):\n        return len(self._data) == 0\n    def size(self):\n        return len(self._data)\n\ns = Stack()\nassert s.is_empty()\ns.push(1); s.push(2); s.push(3)\nassert s.size() == 3\nassert s.peek() == 3\nassert s.pop() == 3\nassert s.pop() == 2\nassert s.size() == 1\ntry:\n    Stack().pop()\n    assert False\nexcept IndexError:\n    pass\nprint('PASS')"
+  },
+  {
+    "id": 9,
+    "category": "simulation",
+    "title": "FizzBuzz with custom rules",
+    "problem": "Write a function `fizzbuzz(n, rules)` where rules is a list of (divisor, word) tuples sorted by divisor. For each number 1..n, if divisible by a divisor, append that word. If no rules match, append the number as string. Return the list.\n\nExamples:\n  fizzbuzz(5, [(3,'Fizz'),(5,'Buzz')]) -> ['1','2','Fizz','4','Buzz']\n  fizzbuzz(15, [(3,'Fizz'),(5,'Buzz')])[14] -> 'FizzBuzz'",
+    "test": "def fizzbuzz(n, rules):\n    result = []\n    for i in range(1, n+1):\n        s = ''.join(word for div, word in rules if i % div == 0)\n        result.append(s if s else str(i))\n    return result\n\nr = fizzbuzz(15, [(3,'Fizz'),(5,'Buzz')])\nassert r[0] == '1'\nassert r[2] == 'Fizz'\nassert r[4] == 'Buzz'\nassert r[14] == 'FizzBuzz'\nassert fizzbuzz(3, [(2,'Even'),(3,'Tri')]) == ['1','Even','Tri']\nassert fizzbuzz(6, [(2,'A'),(3,'B')])[5] == 'AB'\nprint('PASS')"
+  },
+  {
+    "id": 10,
+    "category": "open_ended",
+    "title": "Forge designs its own solution",
+    "problem": "Write a function `flatten(data)` that takes an arbitrarily nested list/tuple structure and returns a flat list of all non-list, non-tuple elements in order.\n\nExamples:\n  flatten([1,[2,[3,4],5]]) -> [1,2,3,4,5]\n  flatten((1,(2,3),[4])) -> [1,2,3,4]\n  flatten([]) -> []\n  flatten([1,'hello',[True,[None]]]) -> [1,'hello',True,None]",
+    "test": "def flatten(data):\n    result = []\n    for item in data:\n        if isinstance(item, (list, tuple)):\n            result.extend(flatten(item))\n        else:\n            result.append(item)\n    return result\n\nassert flatten([1,[2,[3,4],5]]) == [1,2,3,4,5]\nassert flatten((1,(2,3),[4])) == [1,2,3,4]\nassert flatten([]) == []\nassert flatten([1,'hello',[True,[None]]]) == [1,'hello',True,None]\nassert flatten([[[[1]]]]) == [1]\nprint('PASS')"
+  }
+]
