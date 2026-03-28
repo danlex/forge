@@ -30,8 +30,8 @@ setup_tmux() {
     tmux send-keys -t forge:0.0 "cd $FORGE_DIR && bash run_supervisor.sh" Enter
     # Pane 1: Teacher agent (Claude Code)
     tmux send-keys -t forge:0.1 "cd $FORGE_DIR && bash run_orchestrator.sh" Enter
-    # Pane 2: Student container logs
-    tmux send-keys -t forge:0.2 "docker logs -f forge 2>&1" Enter
+    # Pane 2: Student (MLX, runs directly)
+    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && python3 seed.py 2>&1 | tee workspace/student.log" Enter
     # Pane 3: Monitor
     tmux send-keys -t forge:0.3 "cd $FORGE_DIR && python3 monitor.py" Enter
 
@@ -75,9 +75,17 @@ while true; do
 
     # Build check prompt based on state
     PROMPT="Check system. status.md=$STATUS, traces=$TRACES."
-    PROMPT="$PROMPT If submitted: kill teacher context (tmux send-keys -t forge:0.1 /exit Enter, wait 8s), then send grading prompt to teacher pane."
-    PROMPT="$PROMPT If working: check container+ollama health."
-    PROMPT="$PROMPT If traces>=50 or goal.md contains GENERATION ENDED: handle generation boundary, update workspace/research_paper.md with results."
+
+    if [ "$STATUS" = "question" ]; then
+        QUESTION=$(cat workspace/questions.txt 2>/dev/null | head -5)
+        PROMPT="$PROMPT Student is asking a question: '$QUESTION'. Send this to the teacher (pane 1): tell teacher to read workspace/questions.txt, write a helpful hint (not the answer) to workspace/answers.txt, then set status.md to working."
+    elif [ "$STATUS" = "submitted" ]; then
+        PROMPT="$PROMPT Student submitted. Kill teacher context (tmux send-keys -t forge:0.1 /exit Enter, wait 8s), then send grading prompt to teacher."
+    elif [ "$STATUS" = "working" ]; then
+        PROMPT="$PROMPT Student is working. Check health: is seed.py running? Check workspace/escalations.txt for teacher messages."
+    fi
+
+    PROMPT="$PROMPT If traces>=50 or goal.md contains GENERATION ENDED: handle generation boundary, update workspace/research_paper.md."
     PROMPT="$PROMPT Log to workspace/claude_notes.md."
 
     tmux send-keys -t "$SUPERVISOR_PANE" "$PROMPT" Enter

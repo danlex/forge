@@ -70,45 +70,22 @@ do_start() {
         exit 1
     fi
 
-    # Ollama
-    if ! command -v ollama &>/dev/null; then
-        echo "Installing Ollama..."
-        brew install ollama
+    # Python venv with MLX
+    if [ ! -d .venv ]; then
+        echo "Creating Python venv..."
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip install mlx mlx-lm 2>&1 | tail -1
     fi
-    if ! curl -s http://localhost:11434/api/tags &>/dev/null; then
-        echo "Starting Ollama..."
-        ollama serve &>/dev/null &
-        for i in $(seq 1 30); do
-            curl -s http://localhost:11434/api/tags &>/dev/null && break
-            sleep 1
-        done
-    fi
-    echo "Ollama: OK"
-
-    # Model
-    if ! ollama list 2>/dev/null | grep -q "qwen3.5:4b"; then
-        echo "Pulling qwen3.5:4b (this takes a few minutes)..."
-        ollama pull qwen3.5:4b
-    fi
-    if ! ollama list 2>/dev/null | grep -q "forge-gen"; then
-        ollama cp qwen3.5:4b forge-gen000
-    fi
-    echo "Model: OK"
+    echo "MLX: OK"
 
     # Workspace
-    mkdir -p workspace/tools workspace/experiments generations benchmark
+    mkdir -p workspace/tools workspace/experiments workspace/knowledge generations benchmark
     if [ ! -f workspace/soul.md ]; then
         echo "ERROR: workspace/soul.md missing. Cannot start."
         exit 1
     fi
     echo "Workspace: OK"
-
-    # Docker image
-    echo "Building image..."
-    docker build -t forge -q .
-
-    # Container (reuse if possible)
-    ensure_container
 
     # Kill old ticker
     [ -f .ticker.pid ] && kill "$(cat .ticker.pid)" 2>/dev/null || true
