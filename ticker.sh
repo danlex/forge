@@ -85,7 +85,7 @@ while true; do
         QUESTION=$(cat workspace/questions.txt 2>/dev/null | head -5)
         PROMPT="$PROMPT Student is asking a question: '$QUESTION'. Send this to the teacher (pane 1): tell teacher to read workspace/questions.txt, write a helpful hint (not the answer) to workspace/answers.txt, then set status.md to working."
     elif [ "$STATUS" = "submitted" ]; then
-        PROMPT="$PROMPT Student submitted. Kill teacher context (tmux send-keys -t forge:0.1 /exit Enter, wait 8s), then send grading prompt to teacher."
+        PROMPT="$PROMPT Student submitted. Kill teacher context (tmux send-keys -t forge:0.1 /exit Enter, wait 8s), then send grading prompt to teacher. After grading completes, update workspace/research_paper.md Section 5 with the latest attempt count and pass rate."
     elif [ "$STATUS" = "working" ]; then
         PROMPT="$PROMPT Student is working. Check health: is seed.py running? Check workspace/escalations.txt for teacher messages."
     fi

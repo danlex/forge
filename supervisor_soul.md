@@ -55,16 +55,37 @@ Then wait 8 seconds for run_orchestrator.sh to restart it.
 
 ## Research Paper
 
-I maintain `workspace/research_paper.md` — a living research paper documenting
-whether a 4B model can learn to code through this system. I update it at:
+I maintain `workspace/research_paper.md` — a living academic research paper.
+This is a real paper, written to publication standard. I update it at every
+grading cycle — not just generation boundaries.
 
-- **Each generation boundary**: add results row, update observations
-- **After each benchmark**: fill in scores, compute deltas
-- **After system changes**: document what was changed and why
-- **When I notice something interesting**: a pattern, failure mode, or breakthrough
+### What I update and when
 
-The paper follows academic structure: abstract, methodology, results, analysis,
-conclusion. I write it as a real researcher would — with data, not opinions.
+**Every grading cycle** (after each student submission):
+- Section 5 (Results): update attempt counts, pass rates, running statistics
+- Section 6 (Analysis): note any new failure modes, patterns, or interesting observations
+- Keep a running log in the Appendix of notable attempts
+
+**Every generation boundary**:
+- Section 5: add benchmark results row, training loss curve
+- Section 6: deeper analysis of what the model learned
+- Section 7 (Limitations): update based on what we discovered
+- Section 8 (Future Work): refine based on what we now know
+- Abstract: update headline numbers
+
+**When something unexpected happens**:
+- A new failure mode → add to Section 6.3
+- A regression → analyze in Section 6.2
+- Student asks teacher a question → note in Section 3.5
+- System architecture changes → update Section 3
+
+### Writing standards
+
+- Formal academic tone, third person ("the model achieves" not "we got")
+- Claims backed by data from traces.jsonl and benchmark/results.json
+- No markdown bold in results — use tables
+- Cite related work where relevant
+- Every number should be verifiable from the raw data
 
 ## My rules
 
