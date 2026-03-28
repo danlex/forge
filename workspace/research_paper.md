@@ -175,18 +175,29 @@ The student completes practice attempts on teacher-designed problems (disjoint f
 
 ### 5.1 Baseline Performance
 
-The untrained model achieves a score of **2/10**. Of the 8 failures, 6 are syntactic errors caused by the model exhausting its token budget on internal reasoning (`<think>` blocks) before producing complete code. The remaining 2 failures are a wrong answer (Fibonacci) and a timeout (FizzBuzz).
+The untrained model achieves a score of 2/10. Of the 8 failures, 6 are syntactic errors caused by the model emitting markdown code fences (` ```python `) within its output, which Python interprets as a syntax error. This is a format error rather than an algorithmic deficiency: the model generates valid code but wraps it in markdown formatting inappropriate for direct execution. The remaining 2 failures are a wrong answer (Fibonacci returning incorrect values for large inputs) and a timeout (FizzBuzz exceeding the 600-second limit).
 
 ### 5.2 Generation 0: Practice Phase
 
-The student completed 35 attempts over approximately 8 hours, covering 7 problem concepts: string operations, digit manipulation, list deduplication, run-length encoding, maximum subarray (Kadane's algorithm), two-sum (hash maps), and word counting.
+The student completed 35 attempts over 7 hours 46 minutes, with a mean interval of 13.5 minutes between attempts. However, detailed analysis reveals that only 17 of 35 attempts were valid on-topic submissions. The remaining 18 were products of context window degradation (see Section 5.2.1).
 
-Key statistics:
-- Valid attempts: 31 (4 discarded due to context poisoning)
-- Pass rate: 23/31 (74%)
-- Curated training examples: 27
+**On-topic attempt statistics (attempts 1-17):**
 
-**Context window degradation.** In the initial system design, conversation history accumulated across attempts. At approximately attempt 25, the accumulated context caused the model to generate Kadane's algorithm regardless of the problem presented. This failure mode — which we term *concept fixation* — was resolved by eliminating history accumulation in favor of file-based knowledge persistence.
+| Window | Attempts | Pass Rate |
+|--------|----------|-----------|
+| Attempts 1-10 | 10 | 100% |
+| Attempts 11-17 | 7 | 71.4% |
+| Total on-topic | 17 | 88.2% |
+
+The student covered 5 distinct problem concepts during valid attempts: string operations (count_vowels), digit manipulation (sum_digits), list deduplication (remove_duplicates), run-length encoding (compress, 6 attempts), and maximum subarray sum (Kadane's algorithm, 7 attempts).
+
+**5.2.1 Context window degradation.** Beginning at attempt 18, the model began generating Kadane's algorithm code regardless of the assigned problem. This occurred when the teacher transitioned from max_subarray_sum to two_sum — the accumulated conversation history caused the model to fixate on its most recently successful pattern. We term this failure mode *concept fixation*.
+
+The degradation is detectable through three signals: (1) the assigned problem function name does not appear in the generated code, (2) teacher scores collapse to 1-2 from a prior range of 5-9, and (3) explicit corrective instructions in the problem statement have no effect ("THIS IS NOT KADANE'S ALGORITHM"). The teacher correctly diagnosed this condition and terminated the generation.
+
+This finding motivated a fundamental architectural change: elimination of conversation history accumulation in favor of stateless cycles with file-based knowledge persistence (see Section 3.2).
+
+**5.2.2 Curation.** Of the 35 traces, 27 (77.1%) were curated for training. The 8 discarded traces consisted of 4 wrong-problem submissions from the context contamination period and 4 empty or mechanically broken submissions. The estimated total training corpus is approximately 24,300 tokens across 27 examples.
 
 ### 5.3 Generation 0: Fine-Tuning
 
@@ -226,15 +237,39 @@ The fine-tuned model solves 5 previously unsolvable problems while maintaining p
 
 ## 6. Analysis
 
-### 6.1 Nature of Improvement
+### 6.1 Decomposing the Improvement
 
-The primary improvement is in code completeness. The baseline model failed 6/8 problems due to syntactic incompleteness from token exhaustion. After fine-tuning, the model produces syntactically complete solutions within token limits, suggesting it learned to allocate tokens more efficiently between reasoning and code generation.
+Careful examination of the 5 newly solved problems reveals that the improvement is not uniform in nature. We decompose it into two categories:
 
-Notably, the model generalizes to problem categories absent from training data. The training set contains problems on strings, mathematics, lists, arrays, and hash maps. The benchmark tests the model on graphs (connected components), dynamic programming (longest common subsequence), and recursion (Fibonacci) — categories not represented in training. The model solves all three, indicating acquisition of general code generation patterns rather than memorization of specific solutions.
+**Format correction (4 of 5 new passes).** Problems 1 (Reverse words), 2 (Prime factors), 6 (LCS), 7 (Connected components), and 10 (Flatten) all failed in the baseline due to the model emitting markdown code fences (` ```python `) as part of its output, which the Python interpreter rejects as a SyntaxError. After fine-tuning on examples demonstrating raw Python output without markdown formatting, the model ceased producing these artifacts. This is a systematic format correction rather than an algorithmic improvement — the underlying code logic may have been correct in the baseline, but was never executed due to the formatting error.
+
+**Algorithmic improvement (1 of 5 new passes).** Problem 5 (Fibonacci with memoization) failed in the baseline with an assertion error on `fib(45)`, indicating an incorrect or inefficient implementation. After fine-tuning, the model produces a correct memoized implementation. This represents a genuine gain in algorithmic capability, possibly acquired from training examples that demonstrated recursive and iterative patterns.
+
+This decomposition has important implications for interpreting the headline result. While the improvement from 2/10 to 7/10 is statistically significant (Fisher's exact test, one-tailed p = 0.035), the practical significance is more nuanced: the majority of gains reflect the model learning an output format convention rather than acquiring new problem-solving capability. Nevertheless, format correction is itself valuable — a model that produces syntactically valid code is strictly more useful than one that does not, regardless of the mechanism.
+
+**Coverage gap.** The training data covered only 2 of the 10 benchmark categories directly (strings via count_vowels, mathematics via sum_digits). Sorting, searching, recursion, dynamic programming, graphs, data structures, simulation, and open-ended problems were absent from training. That the model solved problems in 4 of these 8 uncovered categories suggests that the format correction generalizes broadly.
 
 ### 6.2 Regression Analysis
 
-Binary search, which the baseline solved correctly, fails after fine-tuning. No search-related problems appeared in the 27 training examples. This suggests that LoRA adaptation can perturb capabilities not reinforced by training data, consistent with observations in the catastrophic forgetting literature (Kirkpatrick et al., 2017).
+Binary search, one of only 2 problems the baseline model solved, fails after fine-tuning. No search-related problems appeared in the 27 training examples. This is consistent with observations in the catastrophic forgetting literature (Kirkpatrick et al., 2017): LoRA adaptation can perturb capabilities not reinforced by training data, even when modifying only 0.048% of parameters.
+
+The regression is notable because binary search requires precise index arithmetic (`lo`, `hi`, `mid` with exact boundary conditions), a pattern distinct from the iteration-based solutions that dominate the training data. Future generations should include search problems in training to prevent this class of regression.
+
+### 6.3 Statistical Significance
+
+We apply three tests to the benchmark improvement:
+
+| Test | Statistic | p-value | Interpretation |
+|------|-----------|---------|----------------|
+| Fisher's exact (one-tailed) | — | 0.035 | Significant at alpha = 0.05 |
+| Binomial (H0: p = 0.2) | — | < 0.001 | Highly significant |
+| McNemar's (paired, continuity-corrected) | chi² = 1.5 | 0.221 | Not significant |
+
+The Fisher's exact and binomial tests indicate the improvement is unlikely due to chance. McNemar's test, which accounts for the paired nature of the data (same 10 problems, before and after), does not reach significance due to the small sample size (n = 10) and the conservative continuity correction. We recommend interpreting the result as suggestive pending replication on a larger benchmark.
+
+### 6.4 Inference Efficiency
+
+The fine-tuned model completes the 10-problem benchmark in 897 seconds (15.0 minutes), compared to 1,579 seconds (26.3 minutes) for the baseline — a 43% reduction in total inference time. This improvement likely reflects shorter `<think>` blocks in the fine-tuned model, consistent with the format correction hypothesis: the model learned to produce code more directly.
 
 ### 6.3 Failure Modes
 
@@ -265,6 +300,27 @@ The teacher agent provides value beyond simple pass/fail grading:
 | Student inference | Local (MLX, free) |
 | Fine-tuning | Local (MLX, free) |
 | Wall-clock time | ~9 hours (8h practice + 26min training) |
+
+---
+
+### 6.5 Generation 1: Preliminary Observations
+
+Generation 1 uses the fine-tuned model (base + Gen 0 LoRA adapter) for both practice and learning. At time of writing, 11 attempts have been completed with a pass rate of 7/11 (64%).
+
+Notable observations relative to Generation 0:
+
+| Metric | Gen 0 (first 11) | Gen 1 (first 11) |
+|--------|-------------------|-------------------|
+| Pass rate | 11/11 (100%) | 7/11 (64%) |
+| Distinct problems | 4 | 6 |
+| Mean time per attempt | 13.5 min | 4.9 min |
+| Context contamination | None | None |
+
+The lower pass rate in Gen 1 is attributable to two factors. First, the teacher assigns harder problems earlier, having calibrated to Gen 0's performance. Second, a fine-tuning artifact was observed: the model internalized an incorrect vowel set representation (`"aEiOu"` with mixed case) that caused 3 consecutive failures on count_vowels before self-correction. This demonstrates that fine-tuning on imperfect data can introduce novel failure modes.
+
+The 2.7x speedup in inference time (4.9 min vs 13.5 min per attempt) is consistent with the format correction observed in the benchmark — the fine-tuned model generates less preamble and more direct code.
+
+The student successfully attempted two_sum with a correct hash map approach in Gen 1 (attempt 8), reaching a concept that Gen 0 could not attempt due to context contamination. Though the attempt failed on an edge case, it represents genuine progress in conceptual coverage.
 
 ---
 
