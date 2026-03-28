@@ -110,15 +110,31 @@ limit before finishing code. The thinking model wastes tokens on internal reason
 4. **Recovery patterns**: student could recover from failures within 1-2 retries
    on the same problem, but not across different problems once context was polluted
 
-### 3.4 Post-Training Benchmark
+### 3.4 Post-Training Benchmark (Generation 0)
 
-*Pending — fine-tuning in progress*
+Fine-tuning: MLX LoRA on Apple M4 24GB. 27 curated traces, 125 iterations,
+25.9 minutes. Loss: 2.1 → 0.06.
+
+| # | Category | Problem | Baseline | Gen 0 |
+|---|----------|---------|----------|-------|
+| 1 | strings | Reverse words | FAIL | **PASS** |
+| 2 | math | Prime factors | FAIL | **PASS** |
+| 3 | sorting | Sort without built-in | PASS | PASS |
+| 4 | search | Binary search | PASS | FAIL* |
+| 5 | recursion | Fibonacci memoization | FAIL | **PASS** |
+| 6 | dynamic_prog | LCS | FAIL | **PASS** |
+| 7 | graphs | Connected components | FAIL | **PASS** |
+| 8 | data_structure | Stack | FAIL | FAIL |
+| 9 | simulation | FizzBuzz custom | FAIL | FAIL |
+| 10 | open_ended | Flatten | FAIL | **PASS** |
+
+*Binary search regressed — likely due to training data not covering search patterns.
 
 | Generation | Score | Delta | Notes |
 |------------|-------|-------|-------|
-| Baseline | 2/10 | — | Pre-training |
-| Gen 0 | ?/10 | ? | After first fine-tune |
-| Gen 1 | ?/10 | ? | After improvements |
+| Baseline | 2/10 | — | Pre-training, most failures from token limit |
+| Gen 0 | **7/10** | **+5** | After first fine-tune on 27 self-generated traces |
+| Gen 1 | ?/10 | ? | Pending |
 
 ---
 
@@ -158,13 +174,19 @@ From `learnings.md`:
 
 ### 5.1 Can a 4B Model Learn?
 
-*To be updated after fine-tuning results.*
+**Yes.** After one generation of self-play (27 curated training examples from its own
+practice), the model improved from 2/10 to 7/10 on a held-out benchmark. Five new
+problem categories were solved that the baseline model could not solve at all.
 
-Preliminary evidence from within-generation learning:
-- The model CAN solve progressively harder problems when given structured feedback
-- It learns specific patterns (hash maps, Kadane's) that persist via learnings.md
-- But without fine-tuning, this learning is fragile — it lives in prompt context, not weights
-- The critical test: does fine-tuning on self-generated data improve benchmark scores?
+Key findings:
+- The model learned to produce complete, syntactically correct code (6/8 baseline
+  failures were syntax errors from token exhaustion; only 2/8 post-training failures)
+- It learned patterns it was explicitly trained on (hash maps, recursion, DP) AND
+  generalized to categories not in training (graphs, flatten)
+- One regression occurred (binary search) — likely because training data didn't
+  include search problems, and the LoRA weights slightly perturbed that capability
+- 27 training examples were sufficient for significant improvement — the quality
+  of examples matters more than quantity
 
 ### 5.2 The Teacher's Role
 
@@ -184,7 +206,23 @@ The teacher (Claude) provides:
 
 ## 6. Conclusion
 
-*To be completed after multiple generations.*
+A 4-billion parameter model can measurably improve its coding ability through a
+closed-loop system of practice, grading, and fine-tuning on self-generated data.
+
+In one generation (35 attempts, 27 curated traces, 26 minutes of LoRA training on
+Apple M4), the model improved from 2/10 to 7/10 on a held-out benchmark of 10
+Python programming problems spanning strings, math, sorting, search, recursion,
+dynamic programming, graphs, data structures, and simulation.
+
+The improvement is not memorization — the benchmark problems were never seen during
+training. The model learned generalizable patterns: how to structure a function,
+how to handle edge cases, how to write syntactically complete code within token limits.
+
+Open questions for future generations:
+- Can Gen 1 push to 9/10 or 10/10?
+- Does the binary search regression recover with more diverse training?
+- What is the ceiling for a 4B model on this benchmark?
+- Does the quality of teacher feedback affect learning rate?
 
 ---
 

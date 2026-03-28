@@ -1,217 +1,168 @@
 #!/usr/bin/env python3
 """
-Fine-tune Qwen 3.5 4B with LoRA on curated traces.
+Fine-tune Qwen 3.5 4B with LoRA using MLX on Apple Silicon.
 Usage: python3 finetune.py [gen_number]
+
+MLX runs natively on Metal — no CPU/GPU transfer, no swap thrashing.
+~8GB memory for 4-bit quantized 4B model + LoRA.
 """
 
 import json
 import os
+import subprocess
 import sys
 import time
 
 GEN = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 GEN_DIR = f"generations/gen{GEN:03d}"
 FORGE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_MODEL = "Qwen/Qwen3.5-4B"
-BASE_WEIGHTS_DIR = os.path.join(FORGE_DIR, "base_weights", "qwen3.5-4b")
+MODEL_NAME = "Qwen/Qwen3.5-4B"
 ADAPTER_DIR = os.path.join(FORGE_DIR, GEN_DIR, "adapter")
 MERGED_DIR = os.path.join(FORGE_DIR, GEN_DIR, "merged")
 
 
-def download_base():
-    """Download base weights if not cached."""
-    if os.path.exists(os.path.join(BASE_WEIGHTS_DIR, "config.json")):
-        print(f"Base weights found at {BASE_WEIGHTS_DIR}")
-        return
+def prepare_data():
+    """Convert curated.jsonl to mlx-lm training format."""
+    curated_file = os.path.join(FORGE_DIR, GEN_DIR, "curated.jsonl")
+    with open(curated_file) as f:
+        examples = [json.loads(l) for l in f if l.strip()]
 
-    print(f"Downloading {BASE_MODEL}...")
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    print(f"Loaded {len(examples)} curated examples")
 
-    os.makedirs(BASE_WEIGHTS_DIR, exist_ok=True)
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
-    tokenizer.save_pretrained(BASE_WEIGHTS_DIR)
-    print("Tokenizer saved")
+    # mlx-lm expects {"messages": [...]} format — already in that format
+    # Split 90/10 train/valid
+    split = max(1, len(examples) // 10)
+    train = examples[:-split] if split > 0 else examples
+    valid = examples[-split:] if split > 0 else examples[:1]
 
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL, torch_dtype="bfloat16", trust_remote_code=True
-    )
-    model.save_pretrained(BASE_WEIGHTS_DIR)
-    print("Model saved")
+    data_dir = os.path.join(FORGE_DIR, GEN_DIR, "mlx_data")
+    os.makedirs(data_dir, exist_ok=True)
 
+    train_file = os.path.join(data_dir, "train.jsonl")
+    valid_file = os.path.join(data_dir, "valid.jsonl")
 
-def load_data():
-    """Load curated JSONL into training format."""
-    data_file = os.path.join(FORGE_DIR, GEN_DIR, "curated.jsonl")
-    examples = []
-    with open(data_file) as f:
-        for line in f:
-            if line.strip():
-                examples.append(json.loads(line))
-    print(f"Loaded {len(examples)} training examples")
-    return examples
+    with open(train_file, "w") as f:
+        for ex in train:
+            f.write(json.dumps(ex) + "\n")
 
+    with open(valid_file, "w") as f:
+        for ex in valid:
+            f.write(json.dumps(ex) + "\n")
 
-def format_for_training(examples, tokenizer):
-    """Convert chat format to tokenized training data."""
-    formatted = []
-    for ex in examples:
-        messages = ex["messages"]
-        # Build a single text: system + user + assistant
-        text = ""
-        for msg in messages:
-            role = msg["role"]
-            content = msg["content"]
-            if role == "system":
-                text += f"<|im_start|>system\n{content}<|im_end|>\n"
-            elif role == "user":
-                text += f"<|im_start|>user\n{content}<|im_end|>\n"
-            elif role == "assistant":
-                text += f"<|im_start|>assistant\n{content}<|im_end|>\n"
-
-        tokens = tokenizer(
-            text,
-            truncation=True,
-            max_length=2048,
-            padding="max_length",
-            return_tensors="pt",
-        )
-        tokens["labels"] = tokens["input_ids"].clone()
-        formatted.append({
-            "input_ids": tokens["input_ids"].squeeze(),
-            "attention_mask": tokens["attention_mask"].squeeze(),
-            "labels": tokens["labels"].squeeze(),
-        })
-
-    return formatted
+    print(f"  Train: {len(train)} examples")
+    print(f"  Valid: {len(valid)} examples")
+    return data_dir
 
 
-def train(examples):
-    """Run LoRA fine-tuning."""
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
-    from peft import LoraConfig, get_peft_model, TaskType
+def train(data_dir):
+    """Run LoRA fine-tuning with mlx-lm."""
+    num_examples = len(open(os.path.join(data_dir, "train.jsonl")).readlines())
+
+    # Config based on dataset size
+    if num_examples < 20:
+        iters = num_examples * 3
+        lr = 2e-4
+    elif num_examples <= 40:
+        iters = num_examples * 5
+        lr = 1e-4
+    else:
+        iters = num_examples * 3
+        lr = 5e-5
+
+    os.makedirs(ADAPTER_DIR, exist_ok=True)
 
     print(f"\n{'=' * 50}")
     print(f"  FINE-TUNING Generation {GEN}")
-    print(f"  {len(examples)} examples")
-    print(f"  Device: MPS" if torch.backends.mps.is_available() else "  Device: CPU")
+    print(f"  Model: {MODEL_NAME}")
+    print(f"  Backend: MLX (Metal GPU)")
+    print(f"  Examples: {num_examples}")
+    print(f"  Iterations: {iters}")
+    print(f"  Learning rate: {lr}")
+    print(f"  LoRA: r=16, layers=16")
     print(f"{'=' * 50}\n")
 
-    # Load tokenizer and model
-    print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_WEIGHTS_DIR, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    cmd = [
+        sys.executable, "-m", "mlx_lm", "lora",
+        "--model", MODEL_NAME,
+        "--train",
+        "--data", data_dir,
+        "--adapter-path", ADAPTER_DIR,
+        "--iters", str(iters),
+        "--learning-rate", str(lr),
+        "--num-layers", "4",
+        "--batch-size", "1",
+        "--val-batches", "1",
+        "--steps-per-eval", str(max(10, iters // 5)),
+        "--steps-per-report", "5",
+        "--max-seq-length", "512",
+        "--grad-checkpoint",
+    ]
 
-    print("Loading model...")
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE_WEIGHTS_DIR,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-    )
+    print(f"Running: {' '.join(cmd[-14:])}")
+    print()
 
-    # LoRA config
-    num_examples = len(examples)
-    if num_examples < 20:
-        epochs = 3
-        lr = 2e-4
-    elif num_examples <= 40:
-        epochs = 5
-        lr = 1e-4
-    else:
-        epochs = 3
-        lr = 5e-5
-
-    print(f"Config: {epochs} epochs, lr={lr}, {num_examples} examples")
-
-    lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
-    )
-
-    model = get_peft_model(model, lora_config)
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    print(f"Trainable: {trainable:,} / {total:,} ({trainable/total*100:.1f}%)")
-
-    # Prepare data
-    print("Tokenizing...")
-    train_data = format_for_training(examples, tokenizer)
-
-    # Training
-    os.makedirs(ADAPTER_DIR, exist_ok=True)
-    training_args = TrainingArguments(
-        output_dir=ADAPTER_DIR,
-        num_train_epochs=epochs,
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        learning_rate=lr,
-        weight_decay=0.01,
-        logging_steps=1,
-        save_strategy="no",
-        bf16=True,
-        use_mps_device=torch.backends.mps.is_available(),
-        report_to="none",
-        dataloader_pin_memory=False,
-    )
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_data,
-    )
-
-    print("\nTraining started...")
     t0 = time.time()
-    result = trainer.train()
+    result = subprocess.run(cmd, cwd=FORGE_DIR, timeout=3600)
     elapsed = time.time() - t0
 
-    print(f"\nTraining complete in {elapsed:.0f}s")
-    print(f"  Loss: {result.training_loss:.4f}")
-    print(f"  Steps: {result.global_step}")
+    if result.returncode != 0:
+        print(f"\nERROR: Training failed (exit code {result.returncode})")
+        return None
 
-    # Save adapter
-    model.save_pretrained(ADAPTER_DIR)
-    tokenizer.save_pretrained(ADAPTER_DIR)
-    print(f"Adapter saved to {ADAPTER_DIR}")
-
-    # Merge adapter into base
-    print("Merging adapter into base weights...")
-    merged_model = model.merge_and_unload()
-    os.makedirs(MERGED_DIR, exist_ok=True)
-    merged_model.save_pretrained(MERGED_DIR)
-    tokenizer.save_pretrained(MERGED_DIR)
-    print(f"Merged model saved to {MERGED_DIR}")
-
+    print(f"\nTraining complete in {elapsed:.0f}s ({elapsed/60:.1f}m)")
     return {
-        "loss": result.training_loss,
-        "steps": result.global_step,
-        "epochs": epochs,
+        "iters": iters,
         "lr": lr,
         "time_seconds": round(elapsed),
         "examples": num_examples,
-        "trainable_params": trainable,
     }
 
 
-def create_ollama_model():
-    """Create an Ollama model from the merged weights."""
-    import subprocess
-
+def fuse_and_export():
+    """Merge LoRA adapter into base model, then create Ollama model."""
     next_gen = GEN + 1
     model_name = f"forge-gen{next_gen:03d}"
-    modelfile = os.path.join(FORGE_DIR, GEN_DIR, "Modelfile")
 
+    print(f"\nFusing adapter into base model...")
+    os.makedirs(MERGED_DIR, exist_ok=True)
+
+    cmd = [
+        sys.executable, "-m", "mlx_lm", "fuse",
+        "--model", MODEL_NAME,
+        "--adapter-path", ADAPTER_DIR,
+        "--save-path", MERGED_DIR,
+    ]
+
+    result = subprocess.run(cmd, cwd=FORGE_DIR, timeout=600)
+    if result.returncode != 0:
+        print(f"ERROR: Fuse failed")
+        return None
+
+    print(f"Merged model saved to {MERGED_DIR}")
+
+    # Create Ollama model
+    modelfile = os.path.join(FORGE_DIR, GEN_DIR, "Modelfile")
     with open(modelfile, "w") as f:
         f.write(f"FROM {MERGED_DIR}\n")
         f.write("PARAMETER temperature 0.7\n")
         f.write("PARAMETER top_p 0.9\n")
         f.write("PARAMETER num_ctx 4096\n")
 
-    print(f"\nCreating Ollama model: {model_name}")
+    print(f"Creating Ollama model: {model_name}")
+
+    # Start ollama if not running
+    subprocess.run(["pgrep", "-x", "ollama"], capture_output=True)
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
+    except Exception:
+        print("Starting Ollama...")
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        time.sleep(5)
+
     result = subprocess.run(
         ["ollama", "create", model_name, "-f", modelfile],
         capture_output=True, text=True, timeout=600,
@@ -220,42 +171,40 @@ def create_ollama_model():
         print(f"  {model_name} created successfully")
         return model_name
     else:
-        print(f"  ERROR: {result.stderr[:200]}")
+        print(f"  ERROR: {result.stderr[:300]}")
         return None
 
 
 def main():
-    print(f"Forge Fine-Tuning — Generation {GEN}")
+    print(f"Forge Fine-Tuning (MLX) — Generation {GEN}")
     print(f"{'=' * 50}")
 
-    # Step 1: Ensure base weights
-    download_base()
+    # Step 1: Prepare data
+    data_dir = prepare_data()
 
-    # Step 2: Load curated data
-    examples = load_data()
+    # Step 2: Train
+    report = train(data_dir)
+    if report is None:
+        sys.exit(1)
 
-    # Step 3: Train
-    report = train(examples)
+    # Step 3: Fuse and create Ollama model
+    model_name = fuse_and_export()
 
-    # Step 4: Create Ollama model
-    model_name = create_ollama_model()
-
-    # Step 5: Write report
+    # Step 4: Write report
     report["model_name"] = model_name
     report_file = os.path.join(FORGE_DIR, GEN_DIR, "report.md")
     with open(report_file, "w") as f:
         f.write(f"# Generation {GEN} Fine-Tuning Report\n\n")
+        f.write(f"- Backend: MLX (Metal GPU)\n")
+        f.write(f"- Base model: {MODEL_NAME}\n")
         f.write(f"- Examples: {report['examples']}\n")
-        f.write(f"- Epochs: {report['epochs']}\n")
+        f.write(f"- Iterations: {report['iters']}\n")
         f.write(f"- Learning rate: {report['lr']}\n")
-        f.write(f"- Final loss: {report['loss']:.4f}\n")
-        f.write(f"- Training steps: {report['steps']}\n")
         f.write(f"- Time: {report['time_seconds']}s\n")
-        f.write(f"- Trainable params: {report['trainable_params']:,}\n")
         f.write(f"- Output model: {model_name}\n")
 
     print(f"\nReport written to {report_file}")
-    print(f"\nNext step: python3 run_benchmark.py {model_name}")
+    print(f"\nNext: python3 run_benchmark.py {model_name}")
 
 
 if __name__ == "__main__":
