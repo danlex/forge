@@ -46,13 +46,17 @@ The system operates autonomously after initialization, requiring no human interv
 
 ## 2. Related Work
 
-**Code generation with LLMs.** Codex (Chen et al., 2021) and subsequent models including AlphaCode (Li et al., 2022), CodeLlama (Rozière et al., 2023), and StarCoder (Li et al., 2023) have demonstrated that language models can generate functionally correct code. These systems typically rely on large-scale pretraining on code corpora. Our work differs in that we begin with a general-purpose small model and improve it through practice rather than additional pretraining data.
+**Code generation with LLMs.** Codex (Chen et al., 2021) and subsequent models including AlphaCode (Li et al., 2022), CodeLlama (Rozière et al., 2023), and StarCoder (Li et al., 2023) established that language models can generate functionally correct code. More recent work has focused on smaller, efficient models: phi-1 (Gunasekar et al., 2023) achieved 50.6% on HumanEval with only 1.3B parameters using synthetic "textbook quality" data, and DeepSeek-Coder (Guo et al., 2024) demonstrated strong performance from 1.3B to 33B parameters. The Qwen family, from which our student model derives, includes Qwen2.5-Coder (Hui et al., 2024) achieving competitive results across 10+ benchmarks. These systems rely on large-scale pretraining or instruction tuning on curated datasets of 20K-75K examples. Our work differs in that we improve a general-purpose model through autonomous practice, requiring only 27 self-generated examples.
 
-**Self-play and self-improvement.** The concept of AI systems improving through self-play has a long history, from TD-Gammon (Tesauro, 1995) to AlphaGo (Silver et al., 2016). In the language domain, Constitutional AI (Bai et al., 2022) and Self-Instruct (Wang et al., 2023) demonstrate that LLMs can generate useful training data for themselves. STaR (Zelikman et al., 2022) shows that models can improve reasoning by training on their own correct chain-of-thought traces. Our work extends this paradigm to code generation with an external teacher providing structured feedback.
+**Self-play and self-improvement.** The concept of AI self-improvement has a long history, from TD-Gammon (Tesauro, 1995) to AlphaGo (Silver et al., 2016). In the language domain, STaR (Zelikman et al., 2022) demonstrates that models can bootstrap reasoning by training on their own correct chain-of-thought traces. SPIN (Chen et al., 2024) introduces self-play fine-tuning where the model generates its own training data without external feedback, achieving strong results at ICML 2024. V-STaR (Hosseini et al., 2024) extends iterative self-improvement to code by training a DPO verifier on both correct and incorrect solutions. Self-Rewarding Language Models (Yuan et al., 2024) use the model as its own judge during iterative DPO training, but require 70B-scale models for reliable self-judgment. Most recently, Liu et al. (2026) formalize self-play as a triadic framework of Proposer, Solver, and Verifier, identifying "asymmetric co-evolution" — where the verifier is more capable than the solver — as a key design principle for sustained improvement. Our architecture instantiates this principle: the teacher (Claude) serves as both Proposer and Verifier, providing richer training signals than the student could generate for itself.
 
-**Parameter-efficient fine-tuning.** LoRA (Hu et al., 2022) enables fine-tuning of large models by training only low-rank adapter matrices, dramatically reducing memory requirements. QLoRA (Dettmers et al., 2023) extends this with quantization. We employ LoRA via the MLX framework (Apple, 2023), which leverages Apple Silicon's unified memory architecture to fine-tune a 4B model within 15.6 GB.
+**LLM-generated training data for code.** Several approaches use LLMs to generate training data in batch. WizardCoder (Luo et al., 2023) adapts Evol-Instruct to evolve code instructions of increasing complexity. Magicoder (Wei et al., 2023) seeds instruction generation from open-source code snippets, producing 75K examples. OpenCodeInterpreter (Zheng et al., 2024) integrates execution feedback into a 68K-example multi-turn dataset. These approaches generate data offline in batch. Forge differs in that data generation is online and adaptive — the teacher designs each problem in response to the student's demonstrated weaknesses, implementing a closed-loop curriculum.
 
-**LLM-as-judge.** Using language models to evaluate other models' outputs has been explored in MT-Bench (Zheng et al., 2023) and other benchmarks. We extend this concept to a continuous teaching loop where the judge not only evaluates but also designs the next problem based on observed weaknesses.
+**Reinforcement learning for code.** CodeRL (Le et al., 2022) trains a separate critic network to provide dense reward signals for code generation. RLTF (Liu et al., 2023) uses multi-granularity unit test feedback as reward. DeepSeek-R1 (DeepSeek, 2025) demonstrates that RL can dramatically improve reasoning, with distillation enabling smaller models to benefit from larger model reasoning traces. Our approach uses supervised fine-tuning on curated traces rather than RL, with the teacher providing structured feedback that serves a similar function to a learned reward model.
+
+**Parameter-efficient fine-tuning.** LoRA (Hu et al., 2022) enables fine-tuning by training only low-rank adapter matrices. QLoRA (Dettmers et al., 2023) extends this with quantization. Critically, Biderman et al. (2024) demonstrate that LoRA "learns less and forgets less" compared to full fine-tuning: it substantially underperforms full fine-tuning in standard settings but better maintains base model performance on tasks not represented in training data. This finding directly informs our analysis of the binary search regression (Section 6.2). We employ LoRA via the MLX framework (MLX Contributors, 2023) on Apple Silicon unified memory.
+
+**LLM-as-judge and curriculum design.** MT-Bench (Zheng et al., 2023) established LLM-as-judge as a viable evaluation paradigm. Self-Refine (Madaan et al., 2023) uses the same model as generator and judge, but only at inference time without weight updates, and only for strong models (GPT-3.5+) that can reliably self-evaluate. Our teacher extends the judge role to include adaptive curriculum design: the judge not only evaluates but designs the next problem calibrated to observed weaknesses, implementing a form of Vygotsky's zone of proximal development (Bengio et al., 2009).
 
 ---
 
@@ -267,7 +271,26 @@ We apply three tests to the benchmark improvement:
 
 The Fisher's exact and binomial tests indicate the improvement is unlikely due to chance. McNemar's test, which accounts for the paired nature of the data (same 10 problems, before and after), does not reach significance due to the small sample size (n = 10) and the conservative continuity correction. We recommend interpreting the result as suggestive pending replication on a larger benchmark.
 
-### 6.4 Inference Efficiency
+### 6.4 Sample Efficiency
+
+The most striking aspect of the result is the ratio of training examples to benchmark improvement. Comparable code instruction-tuning approaches require orders of magnitude more data:
+
+| System | Training Examples | Benchmark Improvement | Examples per +1% |
+|--------|------------------|----------------------|-------------------|
+| WizardCoder (Luo et al., 2023) | 20,000 | +15% HumanEval | ~1,333 |
+| Magicoder (Wei et al., 2023) | 75,000 | +20% HumanEval | ~3,750 |
+| OpenCodeInterpreter (Zheng et al., 2024) | 68,000 | +25% HumanEval | ~2,720 |
+| Forge (this work) | 27 | +50% (custom benchmark) | ~0.54 |
+
+The comparison is imprecise — these systems use different models, benchmarks, and data generation methods — but the three-order-of-magnitude difference in data requirements warrants explanation. We hypothesize three factors:
+
+1. The training examples are generated by the student itself and thus lie exactly on the decision boundary of the model's current capability. External datasets may contain many examples that are either too easy (already in the model's capability) or too hard (beyond what LoRA can bridge).
+
+2. The teacher's adaptive curriculum ensures that each example targets a specific weakness, maximizing information gain per example. This is consistent with Liu et al. (2026), who identify "proactive information seeking" as a key principle for sustained self-improvement.
+
+3. The dominant improvement mechanism is format correction (Section 6.1), which may require fewer examples to learn than novel algorithmic capabilities. A single training example demonstrating raw Python output without markdown fences may be sufficient to correct a systematic formatting error.
+
+### 6.5 Inference Efficiency
 
 The fine-tuned model completes the 10-problem benchmark in 897 seconds (15.0 minutes), compared to 1,579 seconds (26.3 minutes) for the baseline — a 43% reduction in total inference time. This improvement likely reflects shorter `<think>` blocks in the fine-tuned model, consistent with the format correction hypothesis: the model learned to produce code more directly.
 
@@ -328,12 +351,19 @@ The student successfully attempted two_sum with a correct hash map approach in G
 
 Several limitations constrain the generalizability of these results:
 
-1. **Small benchmark**: 10 problems provide limited statistical power. Performance differences of ±1 may not be significant.
-2. **Single generation**: We report results from one fine-tuning cycle. Whether improvement compounds across generations remains untested.
-3. **Teacher bias**: The Claude model serving as teacher may introduce systematic biases in problem design and grading that favor certain solution patterns.
-4. **No human validation**: Neither teacher grades nor benchmark evaluations are independently verified by human judges.
-5. **Hardware constraints**: The 24GB memory limit restricts training context length to 512 tokens and LoRA to 4 layers, potentially limiting what the model can learn from longer examples.
-6. **Regression risk**: As demonstrated by the binary search regression, LoRA fine-tuning on a narrow dataset can degrade performance on unrepresented capabilities.
+1. **Non-standard benchmark.** Our 10-problem benchmark is custom-designed and not directly comparable to established benchmarks such as HumanEval (Chen et al., 2021), MBPP (Austin et al., 2021), or LiveCodeBench (Jain et al., 2024). While it covers 10 algorithmic categories, the small sample size (n=10) limits statistical power — McNemar's test does not reach significance at p < 0.05. Evaluation on standard benchmarks is necessary to establish comparability with prior work.
+
+2. **Format correction dominates.** As discussed in Section 6.1, 4 of 5 benchmark improvements reflect the model learning to suppress markdown formatting rather than acquiring new algorithmic capability. The headline result (2/10 → 7/10) overstates the depth of learning when interpreted as algorithmic improvement.
+
+3. **Single generation.** We report results from one fine-tuning cycle. The self-play literature suggests 2-3 iterations before diminishing returns (Chen et al., 2024; Hosseini et al., 2024), but whether improvement compounds in our setting remains untested. Preliminary Generation 1 data suggests the fine-tuned model may introduce novel failure modes (Section 6.5).
+
+4. **Teacher bias.** The Claude model serving as teacher may introduce systematic biases in problem design, grading, and feedback that favor certain solution patterns. No human validation of teacher grades or curriculum decisions was performed.
+
+5. **Hardware constraints.** The 24GB memory limit restricts training context to 512 tokens and LoRA to 4 layers, well below the configurations recommended by Biderman et al. (2024). Higher rank and more layers may yield stronger results on hardware with more memory.
+
+6. **Regression risk.** The binary search regression demonstrates that LoRA fine-tuning on a narrow dataset can degrade unrepresented capabilities, consistent with Biderman et al. (2024). Training data diversity is critical for mitigating this risk in future generations.
+
+7. **Data contamination uncertainty.** Although the benchmark problems were not included in training, the base model (Qwen 3.5 4B) may have seen similar problems during its original pretraining. We cannot fully rule out that fine-tuning activates latent knowledge from pretraining rather than teaching genuinely new capabilities.
 
 ---
 
@@ -365,17 +395,43 @@ The total cost of the experiment is approximately $2.50 in API usage for the tea
 
 Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. *arXiv:2212.08073*.
 
+Bengio, Y., et al. (2009). Curriculum Learning. *ICML 2009*.
+
+Biderman, D., et al. (2024). LoRA Learns Less and Forgets Less. *TMLR 2024 (Featured)*. arXiv:2405.09673.
+
 Chen, M., et al. (2021). Evaluating Large Language Models Trained on Code. *arXiv:2107.03374*.
+
+Chen, Z., et al. (2024). Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models. *ICML 2024*. arXiv:2401.01335.
+
+DeepSeek (2025). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. *arXiv:2501.12948*.
 
 Dettmers, T., et al. (2023). QLoRA: Efficient Finetuning of Quantized Language Models. *NeurIPS 2023*.
 
+Gunasekar, S., et al. (2023). Textbooks Are All You Need. *arXiv:2306.11644*.
+
+Guo, D., et al. (2024). DeepSeek-Coder: When the Large Language Model Meets Programming. *arXiv:2401.14196*.
+
+Hosseini, A., et al. (2024). V-STaR: Training Verifiers for Self-Taught Reasoners. *arXiv:2402.06457*.
+
 Hu, E. J., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022*.
 
+Hui, B., et al. (2024). Qwen2.5-Coder Technical Report. *arXiv:2409.12186*.
+
 Kirkpatrick, J., et al. (2017). Overcoming Catastrophic Forgetting in Neural Networks. *PNAS, 114*(13), 3521-3526.
+
+Le, H., et al. (2022). CodeRL: Mastering Code Generation through Pretrained Models and Deep Reinforcement Learning. *NeurIPS 2022*. arXiv:2207.01780.
 
 Li, R., et al. (2023). StarCoder: May the Source Be with You! *arXiv:2305.06161*.
 
 Li, Y., et al. (2022). Competition-Level Code Generation with AlphaCode. *Science, 378*(6624), 1092-1097.
+
+Liu, J., et al. (2023). RLTF: Reinforcement Learning from Unit Test Feedback. *TMLR*. arXiv:2307.04349.
+
+Liu, W., et al. (2026). Self-Play Only Evolves When Self-Synthetic Pipeline Ensures Learnable Information Gain. *arXiv:2603.02218*.
+
+Luo, Z., et al. (2023). WizardCoder: Empowering Code Large Language Models with Evol-Instruct. *ICLR 2024*. arXiv:2306.08568.
+
+Madaan, A., et al. (2023). Self-Refine: Iterative Refinement with Self-Feedback. *arXiv:2303.17651*.
 
 MLX Contributors (2023). MLX: An Array Framework for Apple Silicon. *Apple Machine Learning Research*.
 
@@ -387,9 +443,15 @@ Tesauro, G. (1995). Temporal Difference Learning and TD-Gammon. *Communications 
 
 Wang, Y., et al. (2023). Self-Instruct: Aligning Language Models with Self-Generated Instructions. *ACL 2023*.
 
+Wei, Y., et al. (2023). Magicoder: Empowering Code Generation with OSS-Instruct. *ICML 2024*. arXiv:2312.02120.
+
+Yuan, W., et al. (2024). Self-Rewarding Language Models. *ICML 2024*. arXiv:2401.10020.
+
 Zelikman, E., et al. (2022). STaR: Bootstrapping Reasoning with Reasoning. *NeurIPS 2022*.
 
 Zheng, L., et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. *NeurIPS 2023*.
+
+Zheng, T., et al. (2024). OpenCodeInterpreter: Integrating Code Generation with Execution and Refinement. *arXiv:2402.14658*.
 
 ---
 
