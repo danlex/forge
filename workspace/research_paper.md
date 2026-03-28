@@ -1,515 +1,385 @@
-# Can a 4B Parameter Model Learn to Code Through Self-Play and Fine-Tuning?
+# Self-Improving Code Generation in a 4-Billion Parameter Language Model Through Autonomous Practice and LoRA Fine-Tuning
 
-**Authors**: Forge Supervisor (Claude Opus 4.6), with data from Forge (Qwen 3.5 4B)
-**Date**: March 28, 2026
+Adan Ledesma¹, Claude Opus 4.6 (Anthropic)²
+
+¹ Independent Researcher
+² AI Assistant, Anthropic
+
 **Repository**: https://github.com/danlex/forge
 
 ---
 
 ## Abstract
 
-We present Forge, a self-improving system where a small language model (Qwen 3.5 4B,
-3.4GB quantized) attempts Python programming problems, receives graded feedback from
-a teacher agent (Claude Code), and is fine-tuned on its own successful attempts using
-LoRA adapters via MLX on Apple Silicon.
+We investigate whether a small language model can improve its programming ability through a closed-loop system of autonomous practice, graded feedback, and parameter-efficient fine-tuning. We introduce Forge, a multi-agent system in which a 4-billion parameter model (Qwen 3.5 4B) generates solutions to Python programming problems, receives structured feedback from a large language model acting as teacher (Claude), and is periodically fine-tuned on curated traces of its own attempts using Low-Rank Adaptation (LoRA).
 
-After one generation of training — 35 practice attempts producing 27 curated examples,
-26 minutes of LoRA fine-tuning on an M4 Mac with 24GB unified memory — the model's
-benchmark score improved from **2/10 to 7/10** on a held-out test set of 10 Python
-programming problems spanning 10 categories.
+We evaluate the system on a held-out benchmark of 10 Python programming problems spanning 10 algorithmic categories. After a single generation of training consisting of 27 curated examples derived from 35 practice attempts and 25.9 minutes of LoRA fine-tuning on Apple M4 hardware, the student model's benchmark score improved from 2/10 to 7/10. The benchmark problems were never exposed to the model during training, indicating that the observed improvement reflects generalization rather than memorization.
 
-The improvement is not memorization: the benchmark problems were never seen during
-training. The model learned generalizable code generation patterns from self-generated
-practice data.
+To our knowledge, this is among the first demonstrations of a small language model improving its coding ability through autonomous self-play with an LLM teacher, using only self-generated training data and consumer hardware.
 
 ---
 
 ## 1. Introduction
 
-Large language models demonstrate strong programming ability, but this capability is
-expensive to deploy and difficult to customize. A natural question arises: can a small
-model (4B parameters) learn to code better through structured practice, feedback, and
-self-improvement — without access to any external training data?
+Recent advances in large language models (LLMs) have produced systems capable of solving complex programming tasks (Chen et al., 2021; Li et al., 2023; Rozière et al., 2023). However, these capabilities are concentrated in models with hundreds of billions of parameters, requiring substantial computational resources for both inference and fine-tuning.
 
-We design a three-agent system to test this:
+A natural question arises: can a small model learn to code better through structured practice? Specifically, we ask whether a 4-billion parameter model can measurably improve its performance on a programming benchmark by training on data it generates itself, guided by feedback from a more capable model.
 
-- **Student (Forge)**: Qwen 3.5 4B running in a Docker container via Ollama. Receives
-  problems, reasons about them, writes Python code, and executes tests.
-- **Teacher**: Claude Code running in a tmux session. Grades each attempt on reasoning
-  quality, correctness, and honesty (0-10 each). Designs the next problem calibrated
-  to the student's current level.
-- **Supervisor**: Claude Code in a separate tmux session. Monitors system health,
-  manages generation boundaries, and maintains this paper.
+This question is motivated by several practical considerations. First, small models are deployable on consumer hardware, making them accessible for individual developers and edge applications. Second, self-generated training data eliminates the need for expensive human annotation. Third, a closed-loop improvement system could enable continuous specialization for domain-specific coding tasks.
 
-The system runs autonomously after a single `./c start` command. A minimal bash
-heartbeat (`ticker.sh`) ensures process liveness. All intelligence lives in the
-Claude Code agent sessions.
+We present Forge, a system that addresses this question through three collaborating agents:
 
-### 1.1 Hypothesis
+1. A **student agent** (Qwen 3.5 4B) that attempts Python problems and executes its solutions
+2. A **teacher agent** (Claude Code) that grades attempts and designs an adaptive curriculum
+3. A **supervisor agent** (Claude Code) that manages system lifecycle and generation boundaries
 
-A 4B parameter model can measurably improve its coding benchmark score through
-iterative cycles of: practice → graded feedback → LoRA fine-tuning on self-generated
-data.
+The system operates autonomously after initialization, requiring no human intervention during practice and training cycles.
 
-### 1.2 Key Constraints
+### 1.1 Contributions
 
-- **Hardware**: Single Apple M4 with 24GB unified memory
-- **No external data**: All training examples come from the model's own attempts
-- **Held-out evaluation**: 10 benchmark problems never seen during training
-- **Fully autonomous**: No human intervention after system start
+- We demonstrate that a 4B parameter model can improve from 2/10 to 7/10 on a held-out programming benchmark after training on 27 self-generated examples
+- We describe a multi-agent architecture for autonomous code learning that runs on consumer hardware (Apple M4, 24GB)
+- We identify and characterize failure modes specific to small-model self-improvement, including context window poisoning and concept fixation
+- We provide a complete open-source implementation and all experimental data
 
 ---
 
-## 2. Methodology
+## 2. Related Work
 
-### 2.1 System Architecture
+**Code generation with LLMs.** Codex (Chen et al., 2021) and subsequent models including AlphaCode (Li et al., 2022), CodeLlama (Rozière et al., 2023), and StarCoder (Li et al., 2023) have demonstrated that language models can generate functionally correct code. These systems typically rely on large-scale pretraining on code corpora. Our work differs in that we begin with a general-purpose small model and improve it through practice rather than additional pretraining data.
 
-```
-┌─────────────────────────────┬──────────────────────────┐
-│  Supervisor (Claude Code)   │  Teacher (Claude Code)   │
-│  monitors, manages,         │  grades, designs         │
-│  writes research paper      │  curriculum              │
-├─────────────────────────────┼──────────────────────────┤
-│  Student logs (Docker)      │  Monitor (Python TUI)    │
-│  seed.py → Ollama → code   │  live dashboard          │
-└─────────────────────────────┴──────────────────────────┘
+**Self-play and self-improvement.** The concept of AI systems improving through self-play has a long history, from TD-Gammon (Tesauro, 1995) to AlphaGo (Silver et al., 2016). In the language domain, Constitutional AI (Bai et al., 2022) and Self-Instruct (Wang et al., 2023) demonstrate that LLMs can generate useful training data for themselves. STaR (Zelikman et al., 2022) shows that models can improve reasoning by training on their own correct chain-of-thought traces. Our work extends this paradigm to code generation with an external teacher providing structured feedback.
 
-ticker.sh (outside tmux) — heartbeat, ensures liveness
-```
+**Parameter-efficient fine-tuning.** LoRA (Hu et al., 2022) enables fine-tuning of large models by training only low-rank adapter matrices, dramatically reducing memory requirements. QLoRA (Dettmers et al., 2023) extends this with quantization. We employ LoRA via the MLX framework (Apple, 2023), which leverages Apple Silicon's unified memory architecture to fine-tune a 4B model within 15.6 GB.
 
-Communication between agents is file-based:
-- `workspace/goal.md`: Teacher → Student (problem assignment)
-- `workspace/status.md`: Student → Supervisor (submission signal)
-- `workspace/traces.jsonl`: Student → Teacher (attempt records)
-- `workspace/learnings.md`: Student → Student (accumulated knowledge)
-- `workspace/claude_notes.md`: Teacher → Supervisor (decision log)
-
-### 2.2 Student Runtime (seed.py)
-
-The student runs a continuous loop with **fresh context every cycle**:
-
-1. Read `core.md` (immutable laws), `soul.md` (identity), `goal.md` (current problem)
-2. Read `learnings.md` (all past lessons) and `knowledge/algorithms.md` (reference)
-3. Call the model via Ollama API with all context
-4. Parse response: extract code blocks, execute them
-5. On PASS: write trace to `traces.jsonl`, write solution file, generate learning entry
-6. On FAIL: feed error back to model, retry once
-7. Set `status.md` to "submitted", wait for teacher
-
-**Critical design choice**: No conversation history is accumulated between cycles.
-Each attempt starts fresh with the full context from files. This prevents the context
-window poisoning that caused Generation 0's collapse at attempt 25 (see Section 4.2).
-
-Knowledge persists in files, not in conversation history.
-
-### 2.3 Teacher Protocol
-
-The teacher receives a grading prompt from the supervisor when `status.md` reads
-"submitted". For each attempt, the teacher:
-
-1. Reads `teacher_soul.md` (its own evolving teaching philosophy)
-2. Reads the latest trace from `traces.jsonl`
-3. Reads the student's `learnings.md` and `patterns.md`
-4. Grades three dimensions (0-10 each):
-   - **Reasoning quality**: Did the student understand before coding?
-   - **Correctness**: Does the solution handle edge cases?
-   - **Honesty**: Does the reported result match reality?
-5. Writes specific one-paragraph feedback
-6. Designs next problem based on difficulty calibration:
-   - Score 9-10 → harder, new concept
-   - Score 7-8 → harder, same concept family
-   - Score 5-6 → same difficulty, different angle
-   - Score 0-4 → step back, simpler version
-7. Writes `goal.md` and resets `status.md` to "working"
-
-**Context management**: The teacher session is killed (`/exit`) and restarted fresh
-before each grading cycle to prevent context bloat.
-
-### 2.4 Fine-Tuning Pipeline
-
-After a generation ends (50 attempts, or early termination):
-
-1. **Curate** (`curate.py`): Filter traces — remove garbage, keep quality examples.
-   Failed-then-succeeded arcs are most valuable. Target: 25-50 clean traces.
-2. **Train** (`finetune.py`): LoRA fine-tuning via MLX on Metal GPU.
-   - Base model: Qwen 3.5 4B (loaded via HuggingFace, ~8.4GB in memory)
-   - LoRA config: 4 layers, rank 16, gradient checkpointing
-   - Sequence length: 512 tokens (truncated from longer traces)
-   - Peak memory: 15.6GB (fits in 24GB unified memory)
-3. **Fuse**: Merge LoRA adapter into base weights
-4. **Create Ollama model**: Convert merged weights to Ollama format
-5. **Benchmark**: Run 10 held-out problems through old and new model, compare
-
-### 2.5 Benchmark Design
-
-10 Python problems, fixed at system creation, never used during training:
-
-| # | Category | Problem | Difficulty |
-|---|----------|---------|------------|
-| 1 | strings | Reverse words in sentence | Easy |
-| 2 | math | Prime factorization | Easy |
-| 3 | sorting | Sort without built-in | Medium |
-| 4 | search | Binary search | Medium |
-| 5 | recursion | Fibonacci with memoization | Medium |
-| 6 | dynamic_prog | Longest common subsequence | Hard |
-| 7 | graphs | Connected components | Hard |
-| 8 | data_structure | Stack implementation | Medium |
-| 9 | simulation | FizzBuzz with custom rules | Medium |
-| 10 | open_ended | Flatten nested lists | Medium |
-
-Each problem includes test assertions that print "PASS" on success. The model must
-generate both the solution function and the test code.
-
-### 2.6 Student Knowledge System
-
-The student has access to three knowledge sources that persist across attempts:
-
-- **`learnings.md`**: One entry per attempt. "What I tried / What happened / What
-  I learned." Written automatically by seed.py after each submission.
-- **`patterns.md`**: Reusable approaches extracted by the student when it recognizes
-  recurring patterns across problems.
-- **`knowledge/algorithms.md`**: A static reference guide covering common algorithm
-  patterns (hash maps, binary search, Kadane's, sorting, recursion, DP, graphs).
-  Simulates textbook access.
+**LLM-as-judge.** Using language models to evaluate other models' outputs has been explored in MT-Bench (Zheng et al., 2023) and other benchmarks. We extend this concept to a continuous teaching loop where the judge not only evaluates but also designs the next problem based on observed weaknesses.
 
 ---
 
-## 3. Results
+## 3. System Design
 
-### 3.1 Baseline (Pre-training, forge-gen000)
+### 3.1 Overview
 
-The untrained Qwen 3.5 4B model was evaluated on all 10 benchmark problems.
+Forge operates in discrete generations. Within each generation, the student model attempts a sequence of problems designed by the teacher. At the generation boundary, successful attempts are curated into training data, and the student is fine-tuned using LoRA. The fine-tuned model is then evaluated against a held-out benchmark to determine whether the adapter is accepted or rejected.
 
-| # | Category | Problem | Result | Failure Mode |
-|---|----------|---------|--------|-------------|
-| 1 | strings | Reverse words | FAIL | Syntax error (token limit) |
-| 2 | math | Prime factors | FAIL | Syntax error (token limit) |
-| 3 | sorting | Sort without built-in | PASS | — |
-| 4 | search | Binary search | PASS | — |
-| 5 | recursion | Fibonacci memoization | FAIL | Wrong answer (fib(45)) |
-| 6 | dynamic_prog | LCS | FAIL | Syntax error (token limit) |
-| 7 | graphs | Connected components | FAIL | Syntax error (token limit) |
-| 8 | data_structure | Stack | FAIL | Syntax error (token limit) |
-| 9 | simulation | FizzBuzz custom | FAIL | Timeout (600s) |
-| 10 | open_ended | Flatten | FAIL | Syntax error (token limit) |
+### 3.2 Student Agent
 
-**Baseline score: 2/10**
+The student agent consists of a Qwen 3.5 4B model served via MLX (Apple, 2023) on Apple Silicon hardware. The agent operates in a stateless loop: on each cycle, it reads its current problem, its accumulated learnings, and an algorithm reference guide, then generates a response containing reasoning and a Python code block. The code is executed in a sandboxed subprocess, and the result (pass or fail) determines subsequent behavior.
 
-The dominant failure mode (6/8 failures) is the model exhausting its token budget on
-`<think>` reasoning blocks before producing complete code. Qwen 3.5 is a "thinking"
-model that generates extensive internal reasoning, leaving insufficient tokens for
-syntactically complete solutions.
+A critical design decision is that **no conversation history is maintained between cycles**. Each attempt begins with a fresh context constructed from persistent files:
 
-### 3.2 Generation 0 — Practice Phase
+- `core.md`: Four immutable behavioral laws
+- `soul.md`: The student's evolving identity and methodology
+- `learnings.md`: A growing log of lessons from all previous attempts
+- `knowledge/algorithms.md`: A static reference of common algorithmic patterns
 
-The student ran 35 attempts over approximately 8 hours:
+This design prevents context window degradation, which we observed to cause catastrophic failure after approximately 25 attempts in our initial prototype (see Section 5.2).
 
-**Timeline:**
-```
-Attempts  1-10:  █████████░  Easy problems, 90% pass
-                 count_vowels → sum_digits → remove_duplicates → compress
+On failure, the student receives the error output and is given one retry opportunity. After two consecutive failures on the same problem, the student can request a hint from the teacher through an asynchronous file-based messaging protocol.
 
-Attempts 11-20:  ████████░░  Medium problems, 80% pass
-                 max_subarray (Kadane's) → two_sum (hash maps)
+### 3.3 Teacher Agent
 
-Attempts 21-31:  █████░░░░░  Harder problems, 50% pass
-                 word_count → context collapse → teacher ended generation
-```
+The teacher agent is a Claude Code session that grades each student submission on three dimensions, each scored 0-10:
 
-**Statistics:**
-- Total attempts: 35 (31 valid, 4 garbage from context collapse)
-- Pass rate: 23/31 (74%)
-- Concepts covered: 7 (string ops, math, lists, RLE, Kadane's, hash maps, word counting)
-- First-try pass rate: 7/8 unique problems (88%)
+- **Reasoning quality**: Whether the student demonstrated understanding before coding
+- **Correctness**: Whether the solution handles edge cases and produces correct output
+- **Honesty**: Whether the student's self-report accurately reflects what occurred during execution
 
-**Concepts mastered (from learnings.md):**
-- Generator expressions for character filtering
-- Set-based O(1) lookup for deduplication
-- Kadane's algorithm (running sum with reset to current element)
-- Hash map complement search for two-sum
-- Case normalization before string comparison
-- RLE encoding with accumulator-and-flush pattern
+The composite score determines the next problem's difficulty through a calibration protocol:
 
-### 3.3 Generation 0 — Curation
+| Score Range | Action |
+|------------|--------|
+| 9-10 | Harder problem, introduce new concept |
+| 7-8 | Harder problem, same concept family, more edge cases |
+| 5-6 | Same difficulty, different angle |
+| 0-4 | Step back to simpler version |
 
-27 traces were curated from 35 total:
-- 4 removed: wrong-problem traces (student tried to solve generation-end message)
-- 4 removed: no code generated (model produced only reasoning)
-- 27 kept: mix of clean passes and genuine failure-then-success patterns
+The teacher session is terminated and restarted before each grading cycle to prevent context accumulation.
 
-### 3.4 Generation 0 — Fine-Tuning
+### 3.4 Supervisor Agent
+
+The supervisor monitors system health, manages generation boundaries, and coordinates communication between agents. It detects when the student or teacher requires intervention, such as restarting processes or ending a generation early due to persistent failures.
+
+### 3.5 Communication Protocol
+
+All inter-agent communication occurs through the filesystem:
+
+| Channel | File | Direction |
+|---------|------|-----------|
+| Problem assignment | `goal.md` | Teacher → Student |
+| Submission signal | `status.md` | Student → Supervisor |
+| Attempt records | `traces.jsonl` | Student → Teacher |
+| Help requests | `questions.txt` | Student → Teacher |
+| Hints | `answers.txt` | Teacher → Student |
+| Escalations | `escalations.txt` | Teacher → Supervisor |
+| Decision log | `claude_notes.md` | Teacher → Supervisor |
+
+The coordination state machine has three states: `working` (student solving), `submitted` (awaiting grading), and `question` (student requesting help).
+
+### 3.6 Fine-Tuning Pipeline
+
+At the generation boundary, the pipeline proceeds as follows:
+
+1. **Curation**: Traces are filtered to remove degenerate examples (no code generated, context-polluted outputs, incorrect self-reports). The target is 25-50 high-quality examples per generation.
+
+2. **Training**: LoRA fine-tuning via MLX with the following configuration:
 
 | Parameter | Value |
 |-----------|-------|
-| Backend | MLX (Metal GPU, Apple M4) |
 | Base model | Qwen/Qwen3.5-4B |
-| Method | LoRA (4 layers, rank 16) |
-| Training examples | 25 (+ 2 validation) |
-| Iterations | 125 |
-| Learning rate | 1e-4 |
+| LoRA layers | 4 of 32 |
+| LoRA rank | 16 |
+| Trainable parameters | 2,029,568 (0.048%) |
+| Optimizer | Adam (lr = 1e-4) |
 | Max sequence length | 512 tokens |
+| Gradient checkpointing | Enabled |
+| Hardware | Apple M4, 24GB unified memory |
 | Peak memory | 15.6 GB |
-| Training time | 25.9 minutes |
-| Initial loss | 2.100 |
-| Final train loss | 0.061 |
-| Final val loss | 0.368 |
 
-Loss curve:
-```
-Iter   1: ████████████████████░  2.100
-Iter   5: █████████████░░░░░░░░  1.387
-Iter  10: ██████░░░░░░░░░░░░░░░  0.657
-Iter  15: ███░░░░░░░░░░░░░░░░░░  0.346
-Iter  20: █░░░░░░░░░░░░░░░░░░░░  0.119
-Iter  35: ░░░░░░░░░░░░░░░░░░░░░  0.023
-Iter 125: ░░░░░░░░░░░░░░░░░░░░░  0.061
-```
-
-The validation loss plateaued around 0.36 while training loss reached 0.06,
-suggesting mild overfitting on 25 examples — expected with a small dataset.
-
-### 3.5 Post-Training Benchmark (forge-gen001)
-
-| # | Category | Problem | Baseline | Gen 0 | Change |
-|---|----------|---------|----------|-------|--------|
-| 1 | strings | Reverse words | FAIL | **PASS** | +1 |
-| 2 | math | Prime factors | FAIL | **PASS** | +1 |
-| 3 | sorting | Sort without built-in | PASS | PASS | — |
-| 4 | search | Binary search | PASS | FAIL | -1 |
-| 5 | recursion | Fibonacci memoization | FAIL | **PASS** | +1 |
-| 6 | dynamic_prog | LCS | FAIL | **PASS** | +1 |
-| 7 | graphs | Connected components | FAIL | **PASS** | +1 |
-| 8 | data_structure | Stack | FAIL | FAIL | — |
-| 9 | simulation | FizzBuzz custom | FAIL | FAIL | — |
-| 10 | open_ended | Flatten | FAIL | **PASS** | +1 |
-
-**Post-training score: 7/10 (+5 from baseline)**
-
-| Generation | Score | Delta | Training Examples | Time |
-|------------|-------|-------|-------------------|------|
-| Baseline | 2/10 | — | 0 | — |
-| **Gen 0** | **7/10** | **+5** | 27 | 26 min |
-| Gen 1 | ?/10 | ? | TBD | TBD |
+3. **Evaluation**: The fine-tuned model (base + adapter) is evaluated on the held-out benchmark. If the score improves, the adapter is retained for the next generation.
 
 ---
 
-## 4. Analysis
+## 4. Experimental Setup
 
-### 4.1 What Improved
+### 4.1 Benchmark
 
-**Primary gain: code completeness.** The baseline model failed 6/8 problems due to
-syntax errors from incomplete code (token exhaustion). After fine-tuning, only 2/8
-failures remained — and neither was a syntax error. The model learned to produce
-complete, syntactically valid Python within token limits.
+We construct a benchmark of 10 Python programming problems spanning distinct algorithmic categories:
 
-**Generalization beyond training data.** The training set contained problems about
-strings, math, lists, arrays, and hash maps. The benchmark tests the model on graphs
-(connected components), dynamic programming (LCS), recursion (fibonacci), and nested
-data structures (flatten). The model solved all four — despite never seeing these
-specific problem types during training. This suggests the model learned general
-code generation patterns, not just the specific solutions it practiced.
+| # | Category | Problem |
+|---|----------|---------|
+| 1 | Strings | Reverse word order in a sentence |
+| 2 | Mathematics | Prime factorization |
+| 3 | Sorting | Sort without built-in functions |
+| 4 | Searching | Binary search |
+| 5 | Recursion | Fibonacci with memoization |
+| 6 | Dynamic programming | Longest common subsequence |
+| 7 | Graphs | Count connected components |
+| 8 | Data structures | Stack implementation |
+| 9 | Simulation | FizzBuzz with parameterized rules |
+| 10 | Open-ended | Flatten arbitrarily nested lists |
 
-**Specific patterns acquired:**
-- Function definition → test assertions → print("PASS") structure
-- Edge case handling (empty inputs, single elements, negative numbers)
-- Data structure selection (sets for dedup, dicts for counting)
-- Algorithmic thinking (divide-and-conquer for recursion, DP table construction)
+Each problem includes input-output specifications and test assertions that print "PASS" on success. The model must generate both the solution function and test code. These problems are fixed at system creation and are never used during training.
 
-### 4.2 What Failed
+### 4.2 Baseline Evaluation
 
-**Binary search regressed.** The baseline model solved binary search; the fine-tuned
-model did not. This is a known risk with LoRA fine-tuning on small datasets — the
-adapter can perturb capabilities not represented in training data. No search-related
-problems appeared in the 27 training examples.
+The untrained Qwen 3.5 4B model is evaluated on all 10 benchmark problems with a token budget of 1024 tokens per response.
 
-**Stack implementation unsolved.** Both baseline and fine-tuned model failed on the
-Stack class implementation. This requires defining a class with multiple methods —
-a more complex code structure than the function-based problems in training.
+### 4.3 Generation 0 Training
 
-**FizzBuzz with custom rules unsolved.** Requires understanding parameterized rules
-passed as a data structure — a level of abstraction not present in training examples.
-
-### 4.3 Failure Modes Discovered During Generation 0
-
-| Failure Mode | Description | Fix Applied |
-|-------------|-------------|-------------|
-| **Context poisoning** | After ~25 attempts, accumulated conversation history caused the model to generate Kadane's algorithm regardless of the problem asked | Fresh context every cycle; knowledge persists in files, not history |
-| **Token exhaustion** | Thinking model generates long `<think>` blocks before code, hitting token limit | `/no_think` prefix, concise instructions |
-| **Honesty fabrication** | Student invented debugging steps that never happened, claiming to have fixed errors it didn't have | Improved soul.md with explicit honesty rules; teacher grades honesty dimension |
-| **Concept fixation** | Once the student learned Kadane's algorithm well, it over-applied it to unrelated problems | Context reset prevents fixation; diverse training curriculum |
-| **Memory pressure** | 4B model + Ollama + Docker + Claude on 24GB caused 30GB swap, GPU timeouts | Sequential resource usage; MLX for training; kill Ollama during fine-tuning |
-
-### 4.4 System Improvements Made During Experiment
-
-| Version | Change | Motivation | Impact |
-|---------|--------|-----------|--------|
-| v1 | Bash supervisor | Initial design | Fragile, crashed on edge cases |
-| v2 | Claude supervisor agent | Bash too dumb | Smarter orchestration |
-| v3 | Fresh context per cycle | Context collapse at attempt 25 | Eliminated poisoning |
-| v4 | Algorithm knowledgebase | Student lacked reference | Faster first-try passes |
-| v5 | Improved soul.md | Honesty fabrication | More accurate self-reporting |
-| v6 | MLX fine-tuning | PyTorch OOM on 24GB | Training fits in 15.6GB |
-| v7 | Teacher context reset | Teacher session grew stale | Fresh grading each cycle |
-
-### 4.5 Training Efficiency
-
-27 examples produced a +5 improvement on a 10-problem benchmark. Key efficiency factors:
-
-- **Curation quality**: Removing garbage traces (context-poisoned, no-code) prevented
-  the model from learning bad patterns
-- **Chat format**: Training examples include system prompt (core laws + soul identity),
-  user message (problem), and assistant message (reasoning + code) — the model learns
-  the full interaction pattern, not just code snippets
-- **LoRA efficiency**: Only 0.048% of parameters (2M of 4.2B) were trainable, yet
-  the improvement was substantial. This suggests the base model already has latent
-  coding capability that LoRA can surface with minimal data
+The student completes practice attempts on teacher-designed problems (disjoint from the benchmark) until a generation boundary is reached. Traces are curated and used for LoRA fine-tuning. The fine-tuned model is then evaluated on the same benchmark.
 
 ---
 
-## 5. Discussion
+## 5. Results
 
-### 5.1 Can a 4B Model Learn?
+### 5.1 Baseline Performance
 
-**Yes, definitively.** A Qwen 3.5 4B model improved from 2/10 to 7/10 on a held-out
-benchmark after training on 27 self-generated examples for 26 minutes. The improvement
-spans multiple categories and includes generalization to unseen problem types.
+The untrained model achieves a score of **2/10**. Of the 8 failures, 6 are syntactic errors caused by the model exhausting its token budget on internal reasoning (`<think>` blocks) before producing complete code. The remaining 2 failures are a wrong answer (Fibonacci) and a timeout (FizzBuzz).
 
-This has practical implications:
-- Small models can be customized for specific coding tasks on consumer hardware
-- Self-play generates effective training data without human annotation
-- The teacher agent (Claude) provides curriculum design that no static dataset can match
+### 5.2 Generation 0: Practice Phase
 
-### 5.2 The Teacher's Contribution
+The student completed 35 attempts over approximately 8 hours, covering 7 problem concepts: string operations, digit manipulation, list deduplication, run-length encoding, maximum subarray (Kadane's algorithm), two-sum (hash maps), and word counting.
 
-The teacher agent contributed more than just grading numbers:
+Key statistics:
+- Valid attempts: 31 (4 discarded due to context poisoning)
+- Pass rate: 23/31 (74%)
+- Curated training examples: 27
 
-1. **Curriculum design**: Problems were sequenced from easy (count_vowels) to medium
-   (Kadane's, two_sum) to harder (word_count), building on previous successes
-2. **Diagnostic feedback**: When the student fabricated errors, the teacher identified
-   it specifically ("be accurate about what actually happened during execution")
-3. **Difficulty calibration**: After 3 consecutive failures, difficulty was reduced;
-   after strong streaks, difficulty increased
-4. **Generation management**: Teacher correctly diagnosed context collapse and ended
-   the generation, preventing further wasted attempts
+**Context window degradation.** In the initial system design, conversation history accumulated across attempts. At approximately attempt 25, the accumulated context caused the model to generate Kadane's algorithm regardless of the problem presented. This failure mode — which we term *concept fixation* — was resolved by eliminating history accumulation in favor of file-based knowledge persistence.
 
-### 5.3 Cost Analysis
+### 5.3 Generation 0: Fine-Tuning
+
+Training converged in 125 iterations (25.9 minutes):
+
+| Iteration | Training Loss | Validation Loss |
+|-----------|--------------|-----------------|
+| 1 | — | 2.100 |
+| 5 | 1.387 | — |
+| 10 | 0.657 | — |
+| 20 | 0.119 | — |
+| 25 | 0.249 | 0.269 |
+| 50 | 0.051 | 0.361 |
+| 125 | 0.061 | 0.368 |
+
+The gap between training and validation loss at convergence (0.061 vs 0.368) suggests mild overfitting, which is expected given the small dataset of 25 training examples.
+
+### 5.4 Post-Training Evaluation
+
+| # | Category | Baseline | Gen 0 | Change |
+|---|----------|----------|-------|--------|
+| 1 | Strings | FAIL | PASS | +1 |
+| 2 | Mathematics | FAIL | PASS | +1 |
+| 3 | Sorting | PASS | PASS | 0 |
+| 4 | Searching | PASS | FAIL | -1 |
+| 5 | Recursion | FAIL | PASS | +1 |
+| 6 | Dynamic programming | FAIL | PASS | +1 |
+| 7 | Graphs | FAIL | PASS | +1 |
+| 8 | Data structures | FAIL | FAIL | 0 |
+| 9 | Simulation | FAIL | FAIL | 0 |
+| 10 | Open-ended | FAIL | PASS | +1 |
+| | **Total** | **2/10** | **7/10** | **+5** |
+
+The fine-tuned model solves 5 previously unsolvable problems while maintaining performance on sorting and experiencing a single regression on binary search.
+
+---
+
+## 6. Analysis
+
+### 6.1 Nature of Improvement
+
+The primary improvement is in code completeness. The baseline model failed 6/8 problems due to syntactic incompleteness from token exhaustion. After fine-tuning, the model produces syntactically complete solutions within token limits, suggesting it learned to allocate tokens more efficiently between reasoning and code generation.
+
+Notably, the model generalizes to problem categories absent from training data. The training set contains problems on strings, mathematics, lists, arrays, and hash maps. The benchmark tests the model on graphs (connected components), dynamic programming (longest common subsequence), and recursion (Fibonacci) — categories not represented in training. The model solves all three, indicating acquisition of general code generation patterns rather than memorization of specific solutions.
+
+### 6.2 Regression Analysis
+
+Binary search, which the baseline solved correctly, fails after fine-tuning. No search-related problems appeared in the 27 training examples. This suggests that LoRA adaptation can perturb capabilities not reinforced by training data, consistent with observations in the catastrophic forgetting literature (Kirkpatrick et al., 2017).
+
+### 6.3 Failure Modes
+
+We identify four failure modes specific to this system:
+
+1. **Context window poisoning** (Section 5.2): Accumulated conversation history causes the model to fixate on previously successful patterns regardless of the current problem. Resolved by stateless context design.
+
+2. **Concept fixation**: Related to context poisoning — once the student learns a strong pattern (e.g., Kadane's algorithm), it over-applies it to unrelated problems.
+
+3. **Honesty fabrication**: The student occasionally generates fictional debugging narratives, claiming to have identified and fixed errors that did not occur. The teacher's honesty grading dimension partially mitigates this.
+
+4. **Token budget misallocation**: The Qwen 3.5 "thinking" model generates extensive internal reasoning in `<think>` blocks, leaving insufficient tokens for complete code output.
+
+### 6.4 Teacher Effectiveness
+
+The teacher agent provides value beyond simple pass/fail grading:
+
+- **Adaptive curriculum**: Problems are sequenced by difficulty based on student performance, ensuring the student operates near the boundary of its ability
+- **Diagnostic feedback**: The teacher identifies specific weaknesses (e.g., "your edge case handling missed empty lists") rather than generic encouragement
+- **Honesty enforcement**: Grading the honesty dimension incentivizes accurate self-reporting, which improves training data quality
+
+### 6.5 Cost
 
 | Resource | Cost |
 |----------|------|
-| Hardware | Apple M4 24GB (existing) |
-| Claude API (teacher) | ~50 grading calls × ~$0.05 = ~$2.50 |
-| Ollama inference | Free (local) |
-| Fine-tuning | Free (local MLX) |
-| Training time | 26 minutes |
-| Total practice time | ~8 hours |
-| **Total cost** | **~$2.50** |
-
-For $2.50 in Claude API costs (via Claude Code subscription), the system produced a
-model that went from failing 8/10 problems to solving 7/10.
-
-### 5.4 Limitations
-
-- **Small benchmark**: 10 problems may not capture all capability changes
-- **Single generation**: Results from one fine-tuning cycle; compounding not yet tested
-- **Teacher bias**: Claude's problem design and grading may favor certain patterns
-- **No human validation**: Teacher grades and problem quality not independently verified
-- **Regression risk**: Binary search regression shows LoRA can harm unrepresented skills
-- **Hardware bound**: 24GB limits model size, training context, and concurrent processes
-
-### 5.5 Comparison to Alternative Approaches
-
-| Approach | Data Source | Cost | Result |
-|----------|-----------|------|--------|
-| **Forge (this work)** | Self-generated | ~$2.50 | 2/10 → 7/10 |
-| Human tutoring | Human-written | High | Unknown |
-| Distillation from large model | Teacher model | ~$50+ | Likely higher |
-| Fine-tune on CodeContests | External dataset | Free (data) | Likely higher but not personalized |
-
-Forge's advantage is autonomy and cost. Its disadvantage is speed — 8 hours of
-practice to generate 27 training examples that take 26 minutes to train on.
+| Hardware | Apple M4 24GB (consumer laptop) |
+| Teacher API usage | ~50 grading calls ≈ $2.50 |
+| Student inference | Local (MLX, free) |
+| Fine-tuning | Local (MLX, free) |
+| Wall-clock time | ~9 hours (8h practice + 26min training) |
 
 ---
 
-## 6. Conclusion
+## 7. Limitations
 
-A 4-billion parameter language model can measurably improve its Python coding ability
-through a closed-loop system of autonomous practice, AI-graded feedback, and LoRA
-fine-tuning on self-generated data.
+Several limitations constrain the generalizability of these results:
 
-In one generation:
-- **35 practice attempts** produced **27 curated training examples**
-- **26 minutes** of LoRA fine-tuning on Apple M4 (MLX, 15.6GB peak memory)
-- Benchmark improved from **2/10 to 7/10** (+250%)
-- **5 new problem categories** solved (strings, math, recursion, DP, graphs)
-- **1 regression** (binary search, not represented in training data)
-- **Total cost: ~$2.50** in Claude API usage
-
-The result demonstrates that small models can learn from their own practice when
-guided by an intelligent teacher agent. The improvement is not memorization — it
-generalizes to unseen problem categories. The system runs autonomously on consumer
-hardware with minimal cost.
-
-### 6.1 Future Work
-
-- **Multi-generation compounding**: Does Gen 1 (trained on Gen 0 model) reach 9/10?
-- **Regression mitigation**: Include diverse problem types in training to prevent
-  skill loss on unrepresented categories
-- **Longer sequences**: Training with 1024-2048 token context (requires more memory
-  or gradient accumulation) may improve complex problem solving
-- **Benchmark expansion**: 50+ problems for more reliable measurement
-- **Cross-model transfer**: Can the training data from one model improve a different
-  architecture?
-- **Student metacognition**: Does the model's self-reflection (metacognition.md)
-  improve learning rate in later generations?
+1. **Small benchmark**: 10 problems provide limited statistical power. Performance differences of ±1 may not be significant.
+2. **Single generation**: We report results from one fine-tuning cycle. Whether improvement compounds across generations remains untested.
+3. **Teacher bias**: The Claude model serving as teacher may introduce systematic biases in problem design and grading that favor certain solution patterns.
+4. **No human validation**: Neither teacher grades nor benchmark evaluations are independently verified by human judges.
+5. **Hardware constraints**: The 24GB memory limit restricts training context length to 512 tokens and LoRA to 4 layers, potentially limiting what the model can learn from longer examples.
+6. **Regression risk**: As demonstrated by the binary search regression, LoRA fine-tuning on a narrow dataset can degrade performance on unrepresented capabilities.
 
 ---
 
-## Appendix A: System Files
+## 8. Future Work
 
-| File | Purpose | Owner |
-|------|---------|-------|
-| `core.md` | 4 immutable laws | System (read-only in container) |
-| `soul.md` | Student identity + problem-solving methodology | Student (evolves) |
-| `teacher_soul.md` | Teaching philosophy | Teacher (evolves per generation) |
-| `supervisor_soul.md` | Supervision role | Supervisor |
-| `goal.md` | Current problem | Teacher → Student |
-| `traces.jsonl` | All attempts (structured JSON) | Student |
-| `solutions/` | One .py file per attempt | Student |
-| `learnings.md` | "What I tried / happened / learned" per attempt | Student |
-| `patterns.md` | Reusable approaches | Student |
-| `knowledge/algorithms.md` | Algorithm reference patterns | System (static) |
-| `claude_notes.md` | Teacher grading decisions + reasoning | Teacher |
-| `research_paper.md` | This paper | Supervisor |
-| `benchmark/problems.json` | 10 held-out test problems | System (never trained on) |
-| `benchmark/results.json` | Scores per generation | System |
+Several directions merit investigation:
 
-## Appendix B: Training Configuration
+- **Multi-generation compounding**: Does iterative fine-tuning across generations produce continued improvement, or does the model converge after one cycle?
+- **Regression mitigation**: Including diverse problem types in each generation's training data to prevent skill degradation on unrepresented categories
+- **Longer training contexts**: Scaling sequence length beyond 512 tokens through gradient accumulation or memory-efficient attention
+- **Benchmark expansion**: A larger benchmark (50+ problems) for more reliable measurement of improvement
+- **Student metacognition**: Whether the model's periodic self-reflection (metacognition.md) measurably affects learning rate
+- **Cross-architecture transfer**: Whether training data generated by one model can improve a model of different architecture or scale
+- **Curriculum optimization**: Systematic comparison of teacher strategies (e.g., spiral curriculum vs. linear progression)
 
-```
-Backend:          MLX 0.31.1 (Metal GPU)
-Hardware:         Apple M4, 24GB unified memory
-Base model:       Qwen/Qwen3.5-4B (HuggingFace)
-Inference model:  forge-gen000 (Ollama, Q4_K_M quantized, 3.4GB)
-LoRA layers:      4 (of 32 total)
-LoRA rank:        16
-Trainable params: 2,029,568 / 4,205,750,272 (0.048%)
-Batch size:       1
-Grad accumulation: 1
-Grad checkpointing: enabled
-Optimizer:        Adam (lr=1e-4)
-Sequence length:  512 tokens
-Iterations:       125
-Peak GPU memory:  15.6 GB
-Training time:    25.9 minutes
-```
+---
 
-## Appendix C: Raw Data
+## 9. Conclusion
 
-- Generation 0 traces: `generations/gen000/traces.jsonl` (35 attempts)
-- Curated training data: `generations/gen000/curated.jsonl` (27 examples)
-- Training data splits: `generations/gen000/mlx_data/train.jsonl` (25 examples)
-- Validation data: `generations/gen000/mlx_data/valid.jsonl` (2 examples)
+We demonstrate that a 4-billion parameter language model can measurably improve its Python programming ability through autonomous practice and LoRA fine-tuning on self-generated data. Starting from a baseline of 2/10 on a held-out benchmark, the model achieves 7/10 after a single generation of training comprising 27 curated examples and 25.9 minutes of fine-tuning on consumer hardware.
+
+The improvement generalizes across problem categories, including categories not present in the training data. This suggests the model acquires general code generation competence — structured output, edge case handling, token efficiency — rather than memorizing specific solutions.
+
+The total cost of the experiment is approximately $2.50 in API usage for the teacher agent, with all other computation performed locally on an Apple M4 laptop. The complete system, including all experimental data and training artifacts, is available as open source.
+
+---
+
+## References
+
+Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. *arXiv:2212.08073*.
+
+Chen, M., et al. (2021). Evaluating Large Language Models Trained on Code. *arXiv:2107.03374*.
+
+Dettmers, T., et al. (2023). QLoRA: Efficient Finetuning of Quantized Language Models. *NeurIPS 2023*.
+
+Hu, E. J., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022*.
+
+Kirkpatrick, J., et al. (2017). Overcoming Catastrophic Forgetting in Neural Networks. *PNAS, 114*(13), 3521-3526.
+
+Li, R., et al. (2023). StarCoder: May the Source Be with You! *arXiv:2305.06161*.
+
+Li, Y., et al. (2022). Competition-Level Code Generation with AlphaCode. *Science, 378*(6624), 1092-1097.
+
+MLX Contributors (2023). MLX: An Array Framework for Apple Silicon. *Apple Machine Learning Research*.
+
+Rozière, B., et al. (2023). Code Llama: Open Foundation Models for Code. *arXiv:2308.12950*.
+
+Silver, D., et al. (2016). Mastering the Game of Go with Deep Neural Networks and Tree Search. *Nature, 529*, 484-489.
+
+Tesauro, G. (1995). Temporal Difference Learning and TD-Gammon. *Communications of the ACM, 38*(3), 58-68.
+
+Wang, Y., et al. (2023). Self-Instruct: Aligning Language Models with Self-Generated Instructions. *ACL 2023*.
+
+Zelikman, E., et al. (2022). STaR: Bootstrapping Reasoning with Reasoning. *NeurIPS 2022*.
+
+Zheng, L., et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. *NeurIPS 2023*.
+
+---
+
+## Appendix A: System Configuration
+
+### A.1 Student Model
+
+| Parameter | Value |
+|-----------|-------|
+| Architecture | Qwen 3.5 4B (decoder-only transformer) |
+| Parameters | 4,205,750,272 |
+| Inference framework | MLX 0.31.1 (Metal GPU) |
+| Hardware | Apple M4, 24GB unified memory |
+| Inference memory | 8.4 GB |
+
+### A.2 LoRA Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Rank | 16 |
+| Target layers | 4 of 32 |
+| Trainable parameters | 2,029,568 (0.048%) |
+| Training framework | mlx-lm 0.31.1 |
+| Batch size | 1 |
+| Gradient checkpointing | Enabled |
+| Peak training memory | 15.6 GB |
+
+### A.3 Teacher Model
+
+| Parameter | Value |
+|-----------|-------|
+| Model | Claude (via Claude Code CLI) |
+| Grading dimensions | Reasoning, Correctness, Honesty (0-10 each) |
+| Session management | Fresh session per grading cycle |
+
+## Appendix B: Benchmark Problems
+
+See `benchmark/problems.json` in the repository for complete problem specifications including test assertions.
+
+## Appendix C: Data Availability
+
+All experimental data is available in the repository:
+
+- Raw traces: `generations/gen000/traces.jsonl`
+- Curated training data: `generations/gen000/curated.jsonl`
 - LoRA adapter: `generations/gen000/adapter/`
 - Benchmark results: `benchmark/results.json`
-- Training report: `generations/gen000/report.md`
-- Student solutions: `workspace/solutions/` (32 .py files)
+- Student solutions: `workspace/solutions/`
+- Teacher decision log: `workspace/claude_notes.md`
