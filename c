@@ -191,6 +191,10 @@ case "$CMD" in
         python3 "$FORGE_DIR/core/monitor.py"
         ;;
 
+    metrics)
+        python3 "$FORGE_DIR/core/metrics.py"
+        ;;
+
     notes)
         tail -f student/claude_notes.md
         ;;
@@ -226,6 +230,7 @@ case "$CMD" in
         echo "  stop      Pause everything (container + state preserved)"
         echo "  status    Show system status"
         echo "  monitor   Live dashboard"
+        echo "  metrics   Compute and display all metrics"
         echo "  logs      Tail Forge container logs"
         echo "  attach    Attach to tmux session (all panes)"
         echo "  supervisor Attach to Supervisor agent"
