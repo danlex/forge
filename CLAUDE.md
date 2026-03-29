@@ -18,9 +18,9 @@ forge/                    ← you run claude here (architect)
 │   ├── traces.jsonl      ← all attempts
 │   └── learnings.md      ← accumulated lessons
 ├── core/                 ← laws, benchmarks, training scripts
-├── seed.py               ← student runtime (MLX)
-├── ticker.sh             ← heartbeat
-├── monitor.py            ← dashboard
+├── core/core/seed.py — student runtime (MLX)
+├── core/core/ticker.sh — heartbeat
+├── core/core/monitor.py — dashboard
 └── c                     ← CLI
 ```
 

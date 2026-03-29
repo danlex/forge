@@ -92,7 +92,7 @@ do_start() {
 
     # Start ticker (runs OUTSIDE tmux — the heartbeat)
     touch student/claude_notes.md
-    nohup bash "$FORGE_DIR/ticker.sh" >> "$FORGE_DIR/ticker.log" 2>&1 &
+    nohup bash "$FORGE_DIR/core/ticker.sh" >> "$FORGE_DIR/ticker.log" 2>&1 &
     echo $! > .ticker.pid
     echo "Ticker: OK (pid=$!)"
 
@@ -188,7 +188,7 @@ case "$CMD" in
         ;;
 
     monitor)
-        python3 "$FORGE_DIR/monitor.py"
+        python3 "$FORGE_DIR/core/monitor.py"
         ;;
 
     notes)

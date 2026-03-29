@@ -32,7 +32,7 @@ setup_tmux() {
     if [ -n "$LATEST_ADAPTER" ] && [ -f "$LATEST_ADAPTER/adapters.safetensors" ]; then
         ADAPTER_FLAG="FORGE_ADAPTER=$LATEST_ADAPTER"
     fi
-    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && $ADAPTER_FLAG python3 seed.py 2>&1 | tee student/student.log" Enter
+    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && $ADAPTER_FLAG python3 core/seed.py 2>&1 | tee student/student.log" Enter
 
     log "tmux: supervisor(0) teacher(1) student(2)"
 }
