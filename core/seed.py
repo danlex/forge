@@ -405,7 +405,29 @@ def main():
                 }
                 file("append", "traces.jsonl", json.dumps(trace) + "\n")
 
+                log(f"{'=' * 60}")
                 log(f">>> SUBMITTED #{attempt_count} — FAIL (consecutive: {consecutive_fails})")
+                log(f"    Problem: {goal_title}")
+                log(f"    Error: {last_output.split(chr(10))[-1][:80] if last_output else 'no output'}")
+                log(f"{'=' * 60}")
+
+                # Write learning from failure (failures are data too)
+                fail_learning_prompt = (
+                    f"You FAILED this problem.\nProblem: {goal[:300]}\n"
+                    f"Your error: {last_output[:200]}\n\n"
+                    "Write ONE learning entry:\n"
+                    "- What I tried: (one line)\n"
+                    "- What went wrong: (one line)\n"
+                    "- What I should try differently: (one specific thing)\n"
+                )
+                fail_learning = think(fail_learning_prompt, system=system_prompt, max_tokens=256)
+                if fail_learning and not fail_learning.startswith("ERROR:"):
+                    entry = f"\n### Attempt {attempt_count} — FAIL\n{fail_learning}\n"
+                    file("append", "learnings.md", entry)
+                    log(f"--- Learning (from failure) ---")
+                    for ll in fail_learning.split("\n")[:3]:
+                        if ll.strip():
+                            log(f"  {ll.strip()[:100]}")
 
                 # After 2 consecutive fails: ask teacher for help
                 if consecutive_fails >= 2:
@@ -418,15 +440,15 @@ def main():
                     )
                     answer = ask_teacher(question, goal_title)
                     # Answer will be picked up next cycle via answers.txt
-                else:
-                    # Submit and let teacher decide next step
-                    file("write", "status.md", "submitted")
-                    log("Waiting for teacher...")
-                    wait_start = time.time()
-                    while True:
-                        status = file("read", "status.md").strip()
-                        if status != "submitted":
-                            break
+
+                # Always submit to teacher (teacher sees failures too)
+                file("write", "status.md", "submitted")
+                log("Waiting for teacher...")
+                wait_start = time.time()
+                while True:
+                    status = file("read", "status.md").strip()
+                    if status != "submitted":
+                        break
                         if time.time() - wait_start > 300:
                             file("write", "status.md", "working")
                             break
