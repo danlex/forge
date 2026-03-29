@@ -16,7 +16,7 @@ import time
 GEN = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 GEN_DIR = f"generations/gen{GEN:03d}"
 FORGE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_NAME = "Qwen/Qwen3.5-4B"
+MODEL_NAME = os.environ.get("FORGE_MODEL", "Qwen/Qwen3-1.7B")
 ADAPTER_DIR = os.path.join(FORGE_DIR, GEN_DIR, "adapter")
 MERGED_DIR = os.path.join(FORGE_DIR, GEN_DIR, "merged")
 

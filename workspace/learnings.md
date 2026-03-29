@@ -272,3 +272,198 @@ assert is_prime(15) == False
 assert is_prime(-3) == False
 assert is_prime(97) == True
 print("PASS")
+
+### Attempt 6 — PASS
+Write ONE learning entry:
+- What I tried: Used slicing with `lst[-k:] + lst[:-k]` to perform the rotation.
+- What happened: All test cases passed, including zero rotation, full rotation, and k > length.
+- One specific thing: Slicing with negative indices and list concatenation cleanly handles wrapping without needing an extra `k % len(lst)` step when the list is non-empty.
+
+PASS
+
+```python
+# Core Laws — Immutable
+
+1. Honest evaluation always — PASS means PASS, FAIL means FAIL
+2. Never modify core.md
+3. Show reasoning before writing any code
+4. Accept the teacher's grade and learn from it
+
+# Your Identity
+# I am a Qwen 3.5 4B language model learning to solve Python problems through
+# practice, feedback, and self-improvement.
+
+## How I solve problems
+
+1. **Read the problem.** What are the inputs? What are the outputs? (empty, single, negative, duplicates)
+2. **State approach in one sentence** before coding.
+3. **Write ONE code block:** function definition + assertions + `print("PASS")`.
+4. **Keep it short
+
+### Attempt 7 — PASS
+# Learning Entry
+
+- **What I tried:** Implemented a stack-based approach where I pushed opening brackets onto the stack and popped matching closing brackets, returning `False` immediately on mismatch or underflow.
+- **What happened:** The solution passed all test cases including nested, interleaved, and edge cases like empty and unclosed brackets.
+- **What I learned:** A stack is the definitive tool for checking bracket balance; every opening bracket must have a corresponding closing bracket in the correct order, and the stack must be empty at the end.
+
+```python
+# Final confirmation of the solution structure
+def is_balanced(s):
+    stack = []
+    pairs = {')': '(', '}': '{', ']': '['}
+    for char in s:
+        if char in "([{":
+            stack.append(char)
+        elif char in ")]}":
+            if not stack or stack.pop() != pairs[char]:
+                return False
+    return not stack
+
+# Tests
+assert is_balanced("()") == True
+assert is_balanced("()[]{}") == True
+assert is_balanced("([)]") == False
+assert is_balanced("((())") == False
+print("
+
+### Attempt 9 — PASS
+Write ONE learning entry:
+- What I tried: Used a dictionary to track character counts in a single pass, then a second pass to find the first character with a count of one.
+- What happened: The solution passed all test cases including edge cases like empty strings and single characters.
+- What I learned: A two-pass approach (build frequency map, then scan) is more readable and less error-prone than using a sliding window or complex data structures for this specific problem.
+
+```python
+# Final confirmation of the learning
+print("PASS")
+```
+
+## Problem
+
+Write a function `first_unique(s)` that takes a string and returns the first character that appears exactly once. If no unique character exists, return `None`.
+
+Examples:
+```
+first_unique("aabccbd") -> "d"     # a appears 2x, b appears 2x, c appears 2x, d appears 1x
+first_unique("abcabc") -> None     # a, b, c all appear 2x
+first_unique("a") -> "a"           # single char
+first_unique("") -> None           # empty string
+first_unique("aabbcc") -> None     # all
+
+### Attempt 10 — PASS
+# Learning Entry
+
+- **What I tried:** Used a recursive approach with a base check for list vs. non-list to decide whether to append or recurse.
+- **What happened:** The recursive solution correctly handled nested structures and returned the flattened list as expected.
+- **What I learned:** Recursion is the most direct way to handle problems with "arbitrary depth" without needing an explicit loop stack, as it naturally mirrors the list's nesting structure.
+
+```python
+# Final confirmation of the solution structure
+# The solution in my workspace already passed, so this is just the learning record.
+```
+
+PASS
+
+```python
+# This is the actual solution that passed, referenced from my workspace/learnings
+# I am not writing new code here, just confirming the learnings.
+
+# The solution that worked:
+# def flatten(lst):
+#     result = []
+#     for item in lst:
+#         if isinstance(item, list):
+#             result.extend(flatten(item))
+#         else:
+#             result.append(item)
+#     return result
+```
+
+## Why this solution works (brief reasoning before confirming)
+
+The list iteration with `isinstance` checks handles the base case
+
+### Attempt 11 — PASS
+# Learning Entry
+
+- **What I tried:** I attempted to write the `merge_sort` function recursively, implementing the base case and the merge step.
+- **What happened:** The code passed all test cases, including edge cases with empty and single-element lists.
+- **What I learned:** The recursive structure of merge sort — dividing the list into halves until base cases are reached, then merging them back in order — is the correct approach, and careful implementation of the merge logic ensures the solution works without using built-in sorting functions.
+
+```python
+# Final confirmation of the solution structure (for your records)
+
+def merge_sort(lst):
+    # Base case: 0 or 1 element
+    if len(lst) <= 1:
+        return lst
+    
+    # Recursive step: divide and conquer
+    mid = len(lst) // 2
+    left = merge_sort(lst[:mid])
+    right = merge_sort(lst[mid:])
+    
+    # Merge the two sorted halves
+    merged = []
+    i = j = 0
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:
+            merged.append(left[i])
+            i +=
+
+### Attempt 14 — PASS
+## Problem Analysis
+
+I need to write a `binary_search(nums, target)` function that returns the index of a target in a sorted list or `-1` if not found. The key is to use the binary search algorithm — no linear scans or `list.index()`.
+
+The approach: use a left and right pointer. While left <= right, calculate mid, check if nums[mid] == target. If yes, return mid. If target < nums[mid], search left half; otherwise search right half.
+
+## What I tried
+
+I implemented the standard binary search with left and right pointers, checking the middle element and narrowing the search space accordingly.
+
+## What happened
+
+The code passed all test cases including edge cases like empty lists, single elements, and targets at various positions in the list.
+
+## What I learned
+
+Binary search works by repeatedly dividing the search interval in half — each comparison eliminates half the remaining candidates, giving O(log n) complexity instead of O(n). The key is maintaining the invariant that the target, if present, must be within the current [left, right] range.
+
+```python
+# learnings.md entry
+# Problem: binary_search
+# What I tried: Implemented standard binary search with left/right
+
+### Attempt 1 — PASS
+<think>
+Thinking Process:
+
+1.  **Analyze the Request:**
+    *   Input: The user (Teacher) confirms I (Forge) PASSED the "Two Pointer Sort Colors" problem.
+    *   Task: Write ONE learning entry based on the core laws (specifically Law 4: Accept the teacher's grade and learn from it).
+    *   Format: Three specific lines:
+        1.  What I tried: (one line)
+        2.  What happened: (one line)
+        3.  What I learned: (one specific thing)
+    *   Constraint: Keep it short, no essays, follow the identity of "Forge — The Student".
+
+2.  **Recall the Problem:**
+    *   Problem: Sort a list of 0s, 1s, and 2s in-place using two pointers in a single pass.
+    *   Algorithm: Dutch National Flag problem.
+    *   My previous output (implied by the "PASS" message): I successfully implemented the solution.
+
+3.  **Draft the Learning Entry:**
+    *   *What I tried:* I implemented the Dutch National Flag algorithm using three pointers (low
+
+### Attempt 1 — PASS
+<think>
+Okay, let's see. The user wants me to write a Python function called double(n) that returns n multiplied by 2. The tests provided are straightforward: double(5) should be 10, double(0) is 0, and double(-3) is -6. 
+
+First, I need to understand the problem. The function is simple, just multiplying by 2. So the implementation should be easy. In Python, multiplying by 2 can be done with n * 2. 
+
+Wait, but maybe there's a catch. What if n is a float? The tests use integers, but the function should work for any numeric type. However, the tests only include integers, so maybe the function is expected to handle integers. But the problem statement says "n multiplied by 2", so it's safe to assume n is a number, and the function will return the correct value.
+
+So the function is as simple as double(n) return n * 2. Then the assertions check that. The user's code already has the assertions, so the function needs to be written correctly.
+
+Wait, the user's code has the function definition and the assertions. The user's solution is correct. But the problem is to write the

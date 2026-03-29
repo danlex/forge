@@ -1,10 +1,6 @@
-I've failed 3 times on this problem.
-Problem: Write a function `count_vowels(s)` that takes a string and returns the number of
-My last error: Traceback (most recent call last):
-  File "<string>", line 10, in <module>
-    assert count_vowels("hello") == 2
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError
-My approach: Approach: Convert the string to lowercase and check each character against a lowercase string of vowels "aeiou".
+I've failed 2 times on this problem.
+Problem: Write a function `two_pointer_sort_colors(nums)` that sorts a list containing on
+My last error: 
+My approach: # Final confirmation — PASS
 
 Can you give me a hint? Not the answer — just point me in the right direction.

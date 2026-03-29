@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-MODEL_NAME = os.environ.get("FORGE_MODEL", "Qwen/Qwen3.5-4B")
+MODEL_NAME = os.environ.get("FORGE_MODEL", "Qwen/Qwen3-1.7B")
 ADAPTER_PATH = os.environ.get("FORGE_ADAPTER", None)
 WORKSPACE = os.environ.get("FORGE_WORKSPACE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace"))
 CORE_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core.md")
