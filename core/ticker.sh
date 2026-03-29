@@ -3,7 +3,8 @@
 # Ensures tmux alive. Sends "check system" to supervisor every 30s.
 set -u
 
-FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# ticker.sh lives in core/ — project root is one level up
+FORGE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$FORGE_DIR"
 
 SUPERVISOR_PANE="forge:0.0"
