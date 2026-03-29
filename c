@@ -53,7 +53,7 @@ ensure_container() {
 
     # Create new container
     docker run -d --name forge \
-        -v "$FORGE_DIR/workspace":/workspace \
+        -v "$FORGE_DIR/student":/student \
         -e OLLAMA_URL=http://host.docker.internal:11434 \
         -e FORGE_MODEL="$model" \
         forge
@@ -80,9 +80,9 @@ do_start() {
     echo "MLX: OK"
 
     # Workspace
-    mkdir -p workspace/tools workspace/experiments workspace/knowledge generations benchmark
-    if [ ! -f workspace/soul.md ]; then
-        echo "ERROR: workspace/soul.md missing. Cannot start."
+    mkdir -p student/tools student/experiments student/knowledge generations benchmark
+    if [ ! -f student/soul.md ]; then
+        echo "ERROR: student/soul.md missing. Cannot start."
         exit 1
     fi
     echo "Workspace: OK"
@@ -91,7 +91,7 @@ do_start() {
     [ -f .ticker.pid ] && kill "$(cat .ticker.pid)" 2>/dev/null || true
 
     # Start ticker (runs OUTSIDE tmux — the heartbeat)
-    touch workspace/claude_notes.md
+    touch student/claude_notes.md
     nohup bash "$FORGE_DIR/ticker.sh" >> "$FORGE_DIR/ticker.log" 2>&1 &
     echo $! > .ticker.pid
     echo "Ticker: OK (pid=$!)"
@@ -157,12 +157,12 @@ case "$CMD" in
         tmux has-session -t forge 2>/dev/null && echo "  session active" || echo "  no session"
         echo ""
         echo "Workspace:"
-        echo "  status: $(cat workspace/status.md 2>/dev/null || echo 'n/a')"
-        echo "  traces: $(wc -l < workspace/traces.jsonl 2>/dev/null || echo '0')"
+        echo "  status: $(cat student/status.md 2>/dev/null || echo 'n/a')"
+        echo "  traces: $(wc -l < student/traces.jsonl 2>/dev/null || echo '0')"
         echo "  generations: $(ls -d generations/gen*/ 2>/dev/null | wc -l | tr -d ' ')"
         echo ""
         echo "Last 5 notes:"
-        tail -5 workspace/claude_notes.md 2>/dev/null || echo "  none"
+        tail -5 student/claude_notes.md 2>/dev/null || echo "  none"
         ;;
 
     logs)
@@ -192,23 +192,23 @@ case "$CMD" in
         ;;
 
     notes)
-        tail -f workspace/claude_notes.md
+        tail -f student/claude_notes.md
         ;;
 
     reset)
         echo "=== Full Reset ==="
-        echo "This will delete all workspace data and generations."
+        echo "This will delete all student data and generations."
         read -p "Are you sure? (yes/no): " CONFIRM
         if [ "$CONFIRM" = "yes" ]; then
             "$0" stop
             docker rm forge 2>/dev/null || true
-            rm -f workspace/learnings.md workspace/patterns.md workspace/metacognition.md
-            rm -f workspace/traces.jsonl workspace/status.md workspace/commands.txt
-            rm -f workspace/claude_notes.md workspace/goal.md
-            rm -rf workspace/tools/* workspace/experiments/*
+            rm -f student/learnings.md student/patterns.md student/metacognition.md
+            rm -f student/traces.jsonl student/status.md student/commands.txt
+            rm -f student/claude_notes.md student/goal.md
+            rm -rf student/tools/* student/experiments/*
             rm -rf generations/*
             rm -f benchmark/results.json
-            git checkout workspace/soul.md 2>/dev/null || true
+            git checkout student/soul.md 2>/dev/null || true
             echo "Reset complete. Run ./c start to begin fresh."
         else
             echo "Cancelled."

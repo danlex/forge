@@ -1,6 +1,0 @@
-I've failed 2 times on this problem.
-Problem: Write a function `two_pointer_sort_colors(nums)` that sorts a list containing on
-My last error: 
-My approach: # Final confirmation — PASS
-
-Can you give me a hint? Not the answer — just point me in the right direction.

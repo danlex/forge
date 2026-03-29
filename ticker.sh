@@ -1,16 +1,17 @@
 #!/bin/bash
-# Ticker — the heartbeat. Runs OUTSIDE tmux.
-# Ensures tmux is alive and sends "check system" to the supervisor.
+# Ticker — heartbeat. Runs OUTSIDE tmux.
+# Ensures tmux alive. Sends "check system" to supervisor every 30s.
 set -u
 
 FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$FORGE_DIR"
 
 SUPERVISOR_PANE="forge:0.0"
-TEACHER_PANE="forge:0.1"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] TICKER: $*"
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] TICKER: $*"
+    echo "$msg"
+    echo "$msg" >> student/claude_notes.md 2>/dev/null || true
 }
 
 setup_tmux() {
@@ -18,87 +19,69 @@ setup_tmux() {
     tmux kill-session -t forge 2>/dev/null || true
 
     tmux new-session -d -s forge -n main
-    # Pane 0 (left): Supervisor agent
-    # Pane 1 (top-right): Teacher agent
     tmux split-window -h -p 40 -t forge:0.0
-    # Pane 2 (bottom-right top): Student logs
     tmux split-window -v -p 50 -t forge:0.1
-    # Pane 3 (bottom-right bottom): Monitor
-    tmux split-window -v -p 50 -t forge:0.2
 
-    # Pane 0: Supervisor agent (Claude Code)
-    tmux send-keys -t forge:0.0 "cd $FORGE_DIR && bash run_supervisor.sh" Enter
-    # Pane 1: Teacher agent (Claude Code)
-    tmux send-keys -t forge:0.1 "cd $FORGE_DIR && bash run_orchestrator.sh" Enter
-    # Pane 2: Student (MLX, runs directly with adapter if exists)
+    # Pane 0 (left): Supervisor agent
+    tmux send-keys -t forge:0.0 "cd $FORGE_DIR/supervisor && bash run.sh" Enter
+    # Pane 1 (top-right): Teacher agent
+    tmux send-keys -t forge:0.1 "cd $FORGE_DIR/teacher && bash run.sh" Enter
+    # Pane 2 (bottom-right): Student (MLX)
     ADAPTER_FLAG=""
     LATEST_ADAPTER=$(ls -td "$FORGE_DIR"/generations/gen*/adapter 2>/dev/null | head -1)
     if [ -n "$LATEST_ADAPTER" ] && [ -f "$LATEST_ADAPTER/adapters.safetensors" ]; then
         ADAPTER_FLAG="FORGE_ADAPTER=$LATEST_ADAPTER"
     fi
-    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && $ADAPTER_FLAG python3 seed.py 2>&1 | tee workspace/student.log" Enter
-    # Pane 3: Monitor
-    tmux send-keys -t forge:0.3 "cd $FORGE_DIR && python3 monitor.py" Enter
+    tmux send-keys -t forge:0.2 "cd $FORGE_DIR && source .venv/bin/activate && $ADAPTER_FLAG python3 seed.py 2>&1 | tee student/student.log" Enter
 
-    log "tmux session created (4 panes)"
+    log "tmux: supervisor(0) teacher(1) student(2)"
 }
 
 # --- Startup ---
 log "Ticker started (pid=$$)"
 
-# Ensure tmux exists
 if ! tmux has-session -t forge 2>/dev/null; then
     setup_tmux
-    sleep 10  # let agents boot
+    sleep 15
 fi
 
 INITIALIZED=false
 
-# --- Main loop ---
+# --- Main loop: send "check system" to supervisor ---
 while true; do
-    # 1. tmux alive?
+    # tmux alive?
     if ! tmux has-session -t forge 2>/dev/null; then
         log "tmux dead — rebuilding"
         setup_tmux
-        sleep 10
+        sleep 15
         INITIALIZED=false
         continue
     fi
 
-    # 2. First run — tell supervisor to initialize
+    # First run: init supervisor
     if [ "$INITIALIZED" = false ]; then
-        log "Sending init prompt to supervisor"
-        tmux send-keys -t "$SUPERVISOR_PANE" "Read supervisor_soul.md — that is who you are. Read orchestrate.md for system procedures. Check: is Ollama running? Is the forge container running? Is there a workspace/goal.md? If not, send a prompt to the teacher (pane 1) to write the first problem. Log your actions to workspace/claude_notes.md with [SUPERVISOR] prefix." Enter
+        sleep 10
+        STATUS=$(cat student/status.md 2>/dev/null || echo "none")
+        TRACES=$(wc -l < student/traces.jsonl 2>/dev/null || echo "0")
+        log "Init: status=$STATUS traces=$TRACES"
+        tmux send-keys -t "$SUPERVISOR_PANE" "Read soul.md and CLAUDE.md. Check system: student/status.md=$STATUS, traces=$TRACES. If no ../student/goal.md exists, send a prompt to teacher (pane 1) to write the first problem. Log to ../student/claude_notes.md." Enter
         INITIALIZED=true
         sleep 30
         continue
     fi
 
-    # 3. Send periodic check
-    STATUS=$(cat workspace/status.md 2>/dev/null || echo "none")
-    TRACES=$(wc -l < workspace/traces.jsonl 2>/dev/null || echo "0")
+    # Read state
+    STATUS=$(cat student/status.md 2>/dev/null || echo "none")
+    TRACES=$(wc -l < student/traces.jsonl 2>/dev/null || echo "0")
+    TRACES=$(echo "$TRACES" | tr -d ' ')
 
-    # Build check prompt based on state
-    PROMPT="Check system. status.md=$STATUS, traces=$TRACES."
+    # Send check to supervisor
+    tmux send-keys -t "$SUPERVISOR_PANE" "Check system. status=$STATUS traces=$TRACES. Act per your CLAUDE.md instructions." Enter
 
-    if [ "$STATUS" = "question" ]; then
-        QUESTION=$(cat workspace/questions.txt 2>/dev/null | head -5)
-        PROMPT="$PROMPT Student is asking a question: '$QUESTION'. Send this to the teacher (pane 1): tell teacher to read workspace/questions.txt, write a helpful hint (not the answer) to workspace/answers.txt, then set status.md to working."
-    elif [ "$STATUS" = "submitted" ]; then
-        PROMPT="$PROMPT Student submitted. Kill teacher context (tmux send-keys -t forge:0.1 /exit Enter, wait 8s), then send grading prompt to teacher. After grading completes, update workspace/research_paper.md Section 5 with the latest attempt count and pass rate."
-    elif [ "$STATUS" = "working" ]; then
-        PROMPT="$PROMPT Student is working. Check health: is seed.py running? Check workspace/escalations.txt for teacher messages."
-    fi
-
-    PROMPT="$PROMPT If traces>=50 or goal.md contains GENERATION ENDED: handle generation boundary, update workspace/research_paper.md."
-    PROMPT="$PROMPT Log to workspace/claude_notes.md."
-
-    tmux send-keys -t "$SUPERVISOR_PANE" "$PROMPT" Enter
-
-    # 4. Wait — longer if student is working, shorter if submitted
-    if [ "$STATUS" = "submitted" ]; then
-        sleep 40  # give supervisor + teacher time to grade
+    # Sleep based on state
+    if [ "$STATUS" = "submitted" ] || [ "$STATUS" = "question" ]; then
+        sleep 45  # give supervisor + teacher time
     else
-        sleep 30  # polling interval
+        sleep 30
     fi
 done

@@ -14,7 +14,7 @@ import time
 import textwrap
 
 FORGE_DIR = os.path.dirname(os.path.abspath(__file__))
-WORKSPACE = os.path.join(FORGE_DIR, "workspace")
+WORKSPACE = os.path.join(FORGE_DIR, "student")
 
 # --- ANSI helpers ---
 RESET = "\033[0m"

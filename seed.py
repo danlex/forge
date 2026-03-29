@@ -13,8 +13,8 @@ import time
 
 MODEL_NAME = os.environ.get("FORGE_MODEL", "Qwen/Qwen3-1.7B")
 ADAPTER_PATH = os.environ.get("FORGE_ADAPTER", None)
-WORKSPACE = os.environ.get("FORGE_WORKSPACE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "workspace"))
-CORE_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core.md")
+WORKSPACE = os.environ.get("FORGE_WORKSPACE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "student"))
+CORE_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "laws.md")
 
 # MLX model (loaded once)
 _model = None
@@ -47,11 +47,16 @@ def think(prompt, system=None, max_tokens=1024):
 
     text = generate(_model, _tokenizer, prompt=full_prompt, max_tokens=max_tokens, verbose=False)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Handle unclosed <think> tags — keep content, just strip the tag
+    if "<think>" in text and "</think>" not in text:
+        text = text.replace("<think>", "", 1).strip()
     return text
 
 
 def run(code):
     """Execute Python code in subprocess. Returns (passed, output)."""
+    # Sanitize Unicode characters the model copies from problem descriptions
+    code = code.replace("→", "->").replace("←", "<-")
     env = os.environ.copy()
     env["PYTHONPATH"] = os.path.join(WORKSPACE, "tools")
     try:
@@ -223,7 +228,7 @@ def main():
             # --- Think ---
             log("Thinking...")
             t0 = time.time()
-            response = think(user_msg, system=system_prompt)
+            response = think(user_msg, system=system_prompt, max_tokens=2048)
             elapsed = time.time() - t0
 
             if not response or response.startswith("ERROR:"):
@@ -248,6 +253,12 @@ def main():
 
             # --- Execute code ---
             code_blocks = re.findall(r"```python\n(.*?)```", response, re.DOTALL)
+            # Fallback: extract raw code starting with 'def ' if no fenced blocks
+            if not code_blocks:
+                m = re.search(r"(def \w+\(.*?print\([\"']PASS[\"']\))", response, re.DOTALL)
+                if m:
+                    code_blocks = [m.group(1)]
+                    log("--- Extracted raw code (no fences) ---")
             last_passed = False
             last_output = ""
 
@@ -255,6 +266,18 @@ def main():
                 log(f"--- Code ({len(code_blocks)} block(s)) ---")
                 for cl in code_blocks[-1].split("\n")[:12]:
                     log(f"  {cl[:100]}")
+
+            # Auto-prepend TreeNode class if code uses it but doesn't define it
+            TREENODE_DEF = (
+                "class TreeNode:\n"
+                "    def __init__(self, val=0, left=None, right=None):\n"
+                "        self.val = val\n"
+                "        self.left = left\n"
+                "        self.right = right\n\n"
+            )
+            for i in range(len(code_blocks)):
+                if "TreeNode" in code_blocks[i] and "class TreeNode" not in code_blocks[i]:
+                    code_blocks[i] = TREENODE_DEF + code_blocks[i]
 
             for i, code in enumerate(code_blocks):
                 log(f"--- Executing block {i+1}/{len(code_blocks)} ---")
@@ -276,6 +299,9 @@ def main():
                 log(f"Retry response ({len(retry)} chars, {elapsed:.1f}s)")
 
                 retry_blocks = re.findall(r"```python\n(.*?)```", retry, re.DOTALL)
+                for j in range(len(retry_blocks)):
+                    if "TreeNode" in retry_blocks[j] and "class TreeNode" not in retry_blocks[j]:
+                        retry_blocks[j] = TREENODE_DEF + retry_blocks[j]
                 for i, code in enumerate(retry_blocks):
                     passed, output = run(code)
                     last_passed = passed
@@ -326,24 +352,7 @@ def main():
                         break
                 log(f"{'=' * 60}")
 
-                # Write solution file
-                sol_dir = os.path.join(WORKSPACE, "solutions")
-                os.makedirs(sol_dir, exist_ok=True)
-                func_name = "attempt"
-                for cline in (code_blocks[-1] if code_blocks else "").split("\n"):
-                    cline = cline.strip()
-                    if cline.startswith("def "):
-                        func_name = cline.split("(")[0].replace("def ", "").strip()
-                        break
-                sol_filename = f"{attempt_count:03d}_{func_name}.py"
-                sol_content = f'"""\nAttempt #{attempt_count} — PASS\nTimestamp: {trace["timestamp"]}\n\nProblem:\n{goal.strip()}\n"""\n\n'
-                sol_content += f"# {'=' * 40}\n# Solution\n# {'=' * 40}\n\n"
-                sol_content += (code_blocks[-1] if code_blocks else "") + "\n\n"
-                sol_content += f"# {'=' * 40}\n# Test Results: PASS\n# {'=' * 40}\n"
-                for out_line in last_output.split("\n")[:20]:
-                    sol_content += f"#   {out_line}\n"
-                file("write", f"solutions/{sol_filename}", sol_content)
-                log(f"  Wrote solutions/{sol_filename}")
+                # Solutions are NOT stored in workspace (prevents cheating)
 
                 # Learning entry
                 learning_prompt = (
