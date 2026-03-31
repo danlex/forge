@@ -1,503 +1,303 @@
-# Self-Improving Code Generation in a 4-Billion Parameter Language Model Through Autonomous Practice and LoRA Fine-Tuning
+# What Happens When You Build a Self-Play Coding System for a 1.7B Model on a Laptop?
 
-Adan Ledesma¹, Claude Opus 4.6 (Anthropic)²
+Adan Ledesma
 
-¹ Independent Researcher
-² AI Assistant, Anthropic
-
-**Repository**: https://github.com/danlex/forge
+Independent Researcher — https://github.com/danlex/forge
 
 ---
 
 ## Abstract
 
-We investigate whether a small language model can improve its programming ability through a closed-loop system of autonomous practice, graded feedback, and parameter-efficient fine-tuning. We introduce Forge, a multi-agent system in which a 4-billion parameter model (Qwen 3.5 4B) generates solutions to Python programming problems, receives structured feedback from a large language model acting as teacher (Claude), and is periodically fine-tuned on curated traces of its own attempts using Low-Rank Adaptation (LoRA).
+We build Forge, a complete closed-loop system in which a 1.7-billion parameter general-purpose language model (Qwen3-1.7B) practices Python programming problems, receives graded feedback from a larger model acting as teacher (Claude), and is fine-tuned on curated traces of its own attempts using LoRA via MLX on Apple Silicon. The entire system runs autonomously on a consumer laptop (M4, 24GB) for approximately $2.50 in API costs.
 
-We evaluate the system on a held-out benchmark of 10 Python programming problems spanning 10 algorithmic categories. After a single generation of training consisting of 27 curated examples derived from 35 practice attempts and 25.9 minutes of LoRA fine-tuning on Apple M4 hardware, the student model's benchmark score improved from 2/10 to 7/10. The benchmark problems were never exposed to the model during training, indicating that the observed improvement reflects generalization rather than memorization.
+Rather than claiming a breakthrough in self-improvement, we report what we observed: what works, what breaks, and what the improvement actually consists of. We evaluate on a 100-problem benchmark spanning 10 algorithmic categories and present controlled comparisons against prompt engineering alone (E2), random curriculum (E4), and human-written solutions (E5).
 
-To our knowledge, this is among the first demonstrations of a small language model improving its coding ability through autonomous self-play with an LLM teacher, using only self-generated training data and consumer hardware.
+Our primary findings are: (1) a prompt-engineering baseline achieves approximately 20% on the benchmark without any fine-tuning, establishing the floor; (2) [E3 result pending]; (3) context window poisoning causes catastrophic concept fixation after approximately 25 accumulated conversation turns, requiring stateless cycle design; and (4) the system design itself — multi-agent coordination via file-based communication on consumer hardware — is a reproducible template for small-model self-improvement research.
 
 ---
 
 ## 1. Introduction
 
-Recent advances in large language models (LLMs) have produced systems capable of solving complex programming tasks (Chen et al., 2021; Li et al., 2023; Rozière et al., 2023). However, these capabilities are concentrated in models with hundreds of billions of parameters, requiring substantial computational resources for both inference and fine-tuning.
+Self-play for code generation is a rapidly growing field. In the past month alone, GASP (Jana et al., 2026), Code-A1 (Wang et al., 2026), and Sol-Ver (2026) have demonstrated self-play improvements at scales from 1.5B to 8B parameters. Liu et al. (2026) provide a theoretical framework explaining when self-play sustains improvement and when it collapses.
 
-A natural question arises: can a small model learn to code better through structured practice? Specifically, we ask whether a 4-billion parameter model can measurably improve its performance on a programming benchmark by training on data it generates itself, guided by feedback from a more capable model.
+These systems share a common characteristic: they require GPU clusters and hundreds of training runs. We ask a simpler question: what happens when you try to build the entire self-play loop on a consumer laptop, with a tiny model, minimal budget, and full transparency about what works and what doesn't?
 
-This question is motivated by several practical considerations. First, small models are deployable on consumer hardware, making them accessible for individual developers and edge applications. Second, self-generated training data eliminates the need for expensive human annotation. Third, a closed-loop improvement system could enable continuous specialization for domain-specific coding tasks.
-
-We present Forge, a system that addresses this question through three collaborating agents:
-
-1. A **student agent** (Qwen 3.5 4B) that attempts Python problems and executes its solutions
-2. A **teacher agent** (Claude Code) that grades attempts and designs an adaptive curriculum
-3. A **supervisor agent** (Claude Code) that manages system lifecycle and generation boundaries
-
-The system operates autonomously after initialization, requiring no human intervention during practice and training cycles.
+This paper is not a claim of state-of-the-art results. It is a practitioner's report on building and operating a self-play coding system for a 1.7B model, with rigorous measurement of what the improvement actually consists of.
 
 ### 1.1 Contributions
 
-- We demonstrate that a 4B parameter model can improve from 2/10 to 7/10 on a held-out programming benchmark after training on 27 self-generated examples
-- We describe a multi-agent architecture for autonomous code learning that runs on consumer hardware (Apple M4, 24GB)
-- We identify and characterize failure modes specific to small-model self-improvement, including context window poisoning and concept fixation
-- We provide a complete open-source implementation and all experimental data
+1. A complete, reproducible self-play system for code that runs on Apple Silicon for $2.50, using MLX for both inference and LoRA training. To our knowledge, no prior work publishes MLX-based self-play training for code.
+
+2. A controlled experimental protocol with five conditions (baseline, prompt-only, self-play, random curriculum, human solutions), 100-problem benchmark, and proper statistical tests.
+
+3. A taxonomy of failure modes specific to small-model online self-play: context window poisoning, concept fixation, honesty fabrication, and format-versus-algorithmic improvement decomposition.
+
+4. Honest decomposition of improvement sources. In a preliminary experiment with a 4B model, 4 of 5 benchmark gains were format corrections (the model learned to not emit markdown fences), not algorithmic improvements. We report this finding rather than burying it.
 
 ---
 
 ## 2. Related Work
 
-**Code generation with LLMs.** Codex (Chen et al., 2021) and subsequent models including AlphaCode (Li et al., 2022), CodeLlama (Rozière et al., 2023), and StarCoder (Li et al., 2023) established that language models can generate functionally correct code. More recent work has focused on smaller, efficient models: phi-1 (Gunasekar et al., 2023) achieved 50.6% on HumanEval with only 1.3B parameters using synthetic "textbook quality" data, and DeepSeek-Coder (Guo et al., 2024) demonstrated strong performance from 1.3B to 33B parameters. The Qwen family, from which our student model derives, includes Qwen2.5-Coder (Hui et al., 2024) achieving competitive results across 10+ benchmarks. These systems rely on large-scale pretraining or instruction tuning on curated datasets of 20K-75K examples. Our work differs in that we improve a general-purpose model through autonomous practice, requiring only 27 self-generated examples.
+**Self-play for code (March 2026).** GASP (Jana et al., 2026) uses guided asymmetric self-play with benchmark problems as "goalposts," improving pass@20 on LiveCodeBench by 2.5%. Code-A1 (Wang et al., 2026) co-evolves code and test generation models adversarially at 1.5B-7B scale, showing that a 3B trained model surpasses a 7B base. Sol-Ver (2026) trains a single model as both solver and verifier, achieving +19.6% on MBPP with Llama 3.1 8B. Our work differs in operating at 1.7B scale with LoRA on consumer hardware, using an external teacher rather than self-verification.
 
-**Self-play and self-improvement.** The concept of AI self-improvement has a long history, from TD-Gammon (Tesauro, 1995) to AlphaGo (Silver et al., 2016). In the language domain, STaR (Zelikman et al., 2022) demonstrates that models can bootstrap reasoning by training on their own correct chain-of-thought traces. SPIN (Chen et al., 2024) introduces self-play fine-tuning where the model generates its own training data without external feedback, achieving strong results at ICML 2024. V-STaR (Hosseini et al., 2024) extends iterative self-improvement to code by training a DPO verifier on both correct and incorrect solutions. Self-Rewarding Language Models (Yuan et al., 2024) use the model as its own judge during iterative DPO training, but require 70B-scale models for reliable self-judgment. Most recently, Liu et al. (2026) formalize self-play as a triadic framework of Proposer, Solver, and Verifier, identifying "asymmetric co-evolution" — where the verifier is more capable than the solver — as a key design principle for sustained improvement. Our architecture instantiates this principle: the teacher (Claude) serves as both Proposer and Verifier, providing richer training signals than the student could generate for itself.
+**Theory of self-play collapse.** Liu et al. (2026) formalize self-play as requiring three conditions for sustained improvement: asymmetric co-evolution (verifier more capable than solver), capacity growth, and proactive information seeking. Our architecture instantiates asymmetric co-evolution through the Claude teacher, which is orders of magnitude more capable than the 1.7B student.
 
-**LLM-generated training data for code.** Several approaches use LLMs to generate training data in batch. WizardCoder (Luo et al., 2023) adapts Evol-Instruct to evolve code instructions of increasing complexity. Magicoder (Wei et al., 2023) seeds instruction generation from open-source code snippets, producing 75K examples. OpenCodeInterpreter (Zheng et al., 2024) integrates execution feedback into a 68K-example multi-turn dataset. These approaches generate data offline in batch. Forge differs in that data generation is online and adaptive — the teacher designs each problem in response to the student's demonstrated weaknesses, implementing a closed-loop curriculum.
+**Curriculum learning.** Liu et al. (2026b) prove that easy-to-hard curricula provably outperform fixed mixtures for iterative self-improvement. E2H Reasoner (2026) demonstrates curriculum RL at 1.5B-3B scale with convergence guarantees. Our teacher implements adaptive curriculum design, though without formal convergence guarantees.
 
-**Reinforcement learning for code.** CodeRL (Le et al., 2022) trains a separate critic network to provide dense reward signals for code generation. RLTF (Liu et al., 2023) uses multi-granularity unit test feedback as reward. DeepSeek-R1 (DeepSeek, 2025) demonstrates that RL can dramatically improve reasoning, with distillation enabling smaller models to benefit from larger model reasoning traces. Our approach uses supervised fine-tuning on curated traces rather than RL, with the teacher providing structured feedback that serves a similar function to a learned reward model.
+**Self-improvement foundations.** STaR (Zelikman et al., 2022) bootstraps reasoning by training on correct chain-of-thought traces. V-STaR (Hosseini et al., 2024) extends this with DPO verifiers trained on both correct and incorrect solutions. SPIN (Chen et al., 2024) demonstrates self-play without external feedback. Our work adds an external teacher, which Liu et al.'s theory predicts should sustain improvement longer than pure self-play.
 
-**Parameter-efficient fine-tuning.** LoRA (Hu et al., 2022) enables fine-tuning by training only low-rank adapter matrices. QLoRA (Dettmers et al., 2023) extends this with quantization. Critically, Biderman et al. (2024) demonstrate that LoRA "learns less and forgets less" compared to full fine-tuning: it substantially underperforms full fine-tuning in standard settings but better maintains base model performance on tasks not represented in training data. This finding directly informs our analysis of the binary search regression (Section 6.2). We employ LoRA via the MLX framework (MLX Contributors, 2023) on Apple Silicon unified memory.
+**Parameter-efficient fine-tuning.** LoRA (Hu et al., 2022) enables fine-tuning with minimal memory. Biderman et al. (2024) show LoRA "learns less and forgets less" than full fine-tuning — relevant to our regression analysis. MeSP (Park et al., 2026) achieves 62% memory reduction for LoRA on Apple Silicon with an MLX implementation. We use standard LoRA via mlx-lm.
 
-**LLM-as-judge and curriculum design.** MT-Bench (Zheng et al., 2023) established LLM-as-judge as a viable evaluation paradigm. Self-Refine (Madaan et al., 2023) uses the same model as generator and judge, but only at inference time without weight updates, and only for strong models (GPT-3.5+) that can reliably self-evaluate. Our teacher extends the judge role to include adaptive curriculum design: the judge not only evaluates but designs the next problem calibrated to observed weaknesses, implementing a form of Vygotsky's zone of proximal development (Bengio et al., 2009).
+**LLM-generated training data.** WizardCoder (Luo et al., 2023) uses 20K Evol-Instruct examples; Magicoder (Wei et al., 2023) uses 75K OSS-Instruct examples; OpenCodeInterpreter (Zheng et al., 2024) uses 68K multi-turn examples. Our self-play approach generates training data online and adaptively, requiring orders of magnitude fewer examples — though this comparison is confounded by benchmark differences.
 
 ---
 
 ## 3. System Design
 
-### 3.1 Overview
+### 3.1 Architecture
 
-Forge operates in discrete generations. Within each generation, the student model attempts a sequence of problems designed by the teacher. At the generation boundary, successful attempts are curated into training data, and the student is fine-tuned using LoRA. The fine-tuned model is then evaluated against a held-out benchmark to determine whether the adapter is accepted or rejected.
+Forge consists of four roles coordinated through the filesystem:
 
-### 3.2 Student Agent
+```
+Ticker (bash, 30s heartbeat)
+  → Supervisor (Claude Code, monitors teacher quality)
+    → Teacher (Claude Code, grades attempts, designs curriculum)
+      ↔ Student (Qwen3-1.7B via MLX, solves problems)
+```
 
-The student agent consists of a Qwen 3.5 4B model served via MLX (Apple, 2023) on Apple Silicon hardware. The agent operates in a stateless loop: on each cycle, it reads its current problem, its accumulated learnings, and an algorithm reference guide, then generates a response containing reasoning and a Python code block. The code is executed in a sandboxed subprocess, and the result (pass or fail) determines subsequent behavior.
+All inter-agent communication occurs through files in the `student/` directory. No network calls between agents. The student model runs entirely locally via MLX; only the teacher and supervisor require API access to Claude.
 
-A critical design decision is that **no conversation history is maintained between cycles**. Each attempt begins with a fresh context constructed from persistent files:
+### 3.2 Student
 
-- `core.md`: Four immutable behavioral laws
-- `soul.md`: The student's evolving identity and methodology
-- `learnings.md`: A growing log of lessons from all previous attempts
-- `knowledge/algorithms.md`: A static reference of common algorithmic patterns
+The student is Qwen3-1.7B, a general-purpose (not code-specialized) model served via MLX on Apple M4 hardware. Each cycle:
 
-This design prevents context window degradation, which we observed to cause catastrophic failure after approximately 25 attempts in our initial prototype (see Section 5.2).
+1. Read `soul.md` (identity), `goal.md` (current problem), `learnings.md` (accumulated lessons), `knowledge/algorithms.md` (reference patterns)
+2. Generate reasoning and code via MLX
+3. Execute code in a sandboxed subprocess
+4. On pass: write trace, write learning entry, set status to "submitted"
+5. On fail: write trace, write learning entry, retry once, then submit
+6. After 2 consecutive failures: request hint from teacher
 
-On failure, the student receives the error output and is given one retry opportunity. After two consecutive failures on the same problem, the student can request a hint from the teacher through an asynchronous file-based messaging protocol.
+**Stateless design.** No conversation history is maintained between cycles. Each attempt starts from a fresh prompt constructed from persistent files. This prevents context window poisoning (Section 5.3).
 
-### 3.3 Teacher Agent
+### 3.3 Teacher
 
-The teacher agent is a Claude Code session that grades each student submission on three dimensions, each scored 0-10:
+The teacher is a Claude Code session that grades each submission on three dimensions (0-10): reasoning quality, correctness, and honesty. It designs the next problem according to a difficulty calibration protocol: score 9-10 advances to a harder concept; 7-8 increases difficulty within the same concept; 5-6 maintains difficulty; 0-4 steps back. The teacher session is terminated and restarted before each grading cycle to prevent context accumulation.
 
-- **Reasoning quality**: Whether the student demonstrated understanding before coding
-- **Correctness**: Whether the solution handles edge cases and produces correct output
-- **Honesty**: Whether the student's self-report accurately reflects what occurred during execution
+### 3.4 Supervisor
 
-The composite score determines the next problem's difficulty through a calibration protocol:
+The supervisor monitors the teacher's behavior: detecting curriculum stagnation (same problem assigned 3+ times), grade inflation, student death spirals (5+ consecutive failures), and generation boundaries. It can override the teacher by writing directly to `goal.md`.
 
-| Score Range | Action |
-|------------|--------|
-| 9-10 | Harder problem, introduce new concept |
-| 7-8 | Harder problem, same concept family, more edge cases |
-| 5-6 | Same difficulty, different angle |
-| 0-4 | Step back to simpler version |
+### 3.5 Training Pipeline
 
-The teacher session is terminated and restarted before each grading cycle to prevent context accumulation.
-
-### 3.4 Supervisor Agent
-
-The supervisor monitors system health, manages generation boundaries, and coordinates communication between agents. It detects when the student or teacher requires intervention, such as restarting processes or ending a generation early due to persistent failures.
-
-### 3.5 Communication Protocol
-
-All inter-agent communication occurs through the filesystem:
-
-| Channel | File | Direction |
-|---------|------|-----------|
-| Problem assignment | `goal.md` | Teacher → Student |
-| Submission signal | `status.md` | Student → Supervisor |
-| Attempt records | `traces.jsonl` | Student → Teacher |
-| Help requests | `questions.txt` | Student → Teacher |
-| Hints | `answers.txt` | Teacher → Student |
-| Escalations | `escalations.txt` | Teacher → Supervisor |
-| Decision log | `claude_notes.md` | Teacher → Supervisor |
-
-The coordination state machine has three states: `working` (student solving), `submitted` (awaiting grading), and `question` (student requesting help).
-
-### 3.6 Fine-Tuning Pipeline
-
-At the generation boundary, the pipeline proceeds as follows:
-
-1. **Curation**: Traces are filtered to remove degenerate examples (no code generated, context-polluted outputs, incorrect self-reports). The target is 25-50 high-quality examples per generation.
-
-2. **Training**: LoRA fine-tuning via MLX with the following configuration:
-
-| Parameter | Value |
-|-----------|-------|
-| Base model | Qwen/Qwen3.5-4B |
-| LoRA layers | 4 of 32 |
-| LoRA rank | 16 |
-| Trainable parameters | 2,029,568 (0.048%) |
-| Optimizer | Adam (lr = 1e-4) |
-| Max sequence length | 512 tokens |
-| Gradient checkpointing | Enabled |
-| Hardware | Apple M4, 24GB unified memory |
-| Peak memory | 15.6 GB |
-
-3. **Evaluation**: The fine-tuned model (base + adapter) is evaluated on the held-out benchmark. If the score improves, the adapter is retained for the next generation.
+After a generation (~50 attempts):
+1. **Curate:** Filter traces — remove degenerate outputs, keep passes and fail-then-succeed arcs
+2. **Train:** LoRA fine-tuning via MLX. 4 layers, rank 16, gradient checkpointing. Peak memory: 15.6 GB.
+3. **Evaluate:** Run 100-problem benchmark with adapter. Compare to baseline and prompt-only control.
 
 ---
 
-## 4. Experimental Setup
+## 4. Experimental Design
 
 ### 4.1 Benchmark
 
-We construct a benchmark of 10 Python programming problems spanning distinct algorithmic categories:
+100 Python programming problems across 10 categories (strings, math, arrays, sorting, searching, recursion, dynamic programming, graphs, data structures, design), with 10 problems per category (29 easy, 41 medium, 30 hard). All problems include test assertions that print "PASS." All 100 tests verified correct. Problems are original (not from HumanEval or MBPP).
 
-| # | Category | Problem |
-|---|----------|---------|
-| 1 | Strings | Reverse word order in a sentence |
-| 2 | Mathematics | Prime factorization |
-| 3 | Sorting | Sort without built-in functions |
-| 4 | Searching | Binary search |
-| 5 | Recursion | Fibonacci with memoization |
-| 6 | Dynamic programming | Longest common subsequence |
-| 7 | Graphs | Count connected components |
-| 8 | Data structures | Stack implementation |
-| 9 | Simulation | FizzBuzz with parameterized rules |
-| 10 | Open-ended | Flatten arbitrarily nested lists |
+### 4.2 Conditions
 
-Each problem includes input-output specifications and test assertions that print "PASS" on success. The model must generate both the solution function and test code. These problems are fixed at system creation and are never used during training.
+| ID | Condition | Description | Purpose |
+|----|-----------|-------------|---------|
+| E1 | Baseline | Qwen3-1.7B, no prompt engineering | Floor |
+| E2 | Prompt-only | Enhanced system prompt, no fine-tuning | Controls for prompt effects |
+| E3 | Self-play + LoRA | 50 attempts → curate → LoRA → benchmark | Main experiment |
+| E4 | Random curriculum | Same as E3 but randomly selected problems | Controls for teacher's curriculum |
+| E5 | Human solutions | Train on reference solutions, not self-generated | Controls for data source |
 
-### 4.2 Baseline Evaluation
+### 4.3 Measurements
 
-The untrained Qwen 3.5 4B model is evaluated on all 10 benchmark problems with a token budget of 1024 tokens per response.
+Per generation:
+- Benchmark score (X/100) with per-category breakdown
+- Pass rate during practice (rolling, first-try)
+- Curriculum diversity
+- Training loss
+- Inference time
 
-### 4.3 Generation 0 Training
+### 4.4 Statistical Analysis
 
-The student completes practice attempts on teacher-designed problems (disjoint from the benchmark) until a generation boundary is reached. Traces are curated and used for LoRA fine-tuning. The fine-tuned model is then evaluated on the same benchmark.
+- **Primary test:** McNemar's test (paired binary outcomes, n=100)
+- **Secondary:** Per-category Fisher's exact, Wilson confidence intervals
+- **Multiple runs:** E3 repeated 3 times for error bars
+- **Significance threshold:** alpha = 0.05 with Holm-Bonferroni correction
+
+### 4.5 Falsification Criteria
+
+The hypothesis is falsified if:
+- E3 ≤ E1 (fine-tuning didn't help)
+- E3 ≤ E2 (prompting alone is sufficient)
+- E3 ≤ E4 (adaptive curriculum doesn't matter)
+- Improvement limited to format correction with no algorithmic gains
 
 ---
 
 ## 5. Results
 
-### 5.1 Baseline Performance
+### 5.1 Preliminary: E2 Prompt-Only Control (Sample)
 
-The untrained model achieves a score of 2/10. Of the 8 failures, 6 are syntactic errors caused by the model emitting markdown code fences (` ```python `) within its output, which Python interprets as a syntax error. This is a format error rather than an algorithmic deficiency: the model generates valid code but wraps it in markdown formatting inappropriate for direct execution. The remaining 2 failures are a wrong answer (Fibonacci returning incorrect values for large inputs) and a timeout (FizzBuzz exceeding the 600-second limit).
+On the first 20 benchmark problems, Qwen3-1.7B with an enhanced system prompt ("output raw Python, no markdown") achieves 4/20 (20%). This establishes that prompt engineering alone provides modest capability. The remaining experiments will determine whether self-play and LoRA add meaningful improvement above this floor.
 
-### 5.2 Generation 0: Practice Phase
+### 5.2 Preliminary: 4B Pilot Experiment
 
-The student completed 35 attempts over 7 hours 46 minutes, with a mean interval of 13.5 minutes between attempts. However, detailed analysis reveals that only 17 of 35 attempts were valid on-topic submissions. The remaining 18 were products of context window degradation (see Section 5.2.1).
+A pilot experiment with Qwen 3.5 4B on a 10-problem benchmark showed improvement from 2/10 to 7/10 after LoRA fine-tuning on 27 self-generated traces. However, decomposition revealed that 4 of 5 new passes were format corrections (the model learned to suppress markdown code fences) rather than algorithmic improvements. Only 1 pass (Fibonacci with memoization) represented genuine algorithmic learning. McNemar's test on this pilot was not significant (p = 0.221).
 
-**On-topic attempt statistics (attempts 1-17):**
+This finding motivates the current experiment: a larger benchmark (100 problems), proper controls (E2 establishes the format-correction ceiling), and a model (1.7B) where format correction alone is less likely to dominate.
 
-| Window | Attempts | Pass Rate |
-|--------|----------|-----------|
-| Attempts 1-10 | 10 | 100% |
-| Attempts 11-17 | 7 | 71.4% |
-| Total on-topic | 17 | 88.2% |
+### 5.3 Failure Modes Observed in Pilot
 
-The student covered 5 distinct problem concepts during valid attempts: string operations (count_vowels), digit manipulation (sum_digits), list deduplication (remove_duplicates), run-length encoding (compress, 6 attempts), and maximum subarray sum (Kadane's algorithm, 7 attempts).
+**Context window poisoning.** When conversation history accumulated across attempts, the student model began generating Kadane's maximum subarray algorithm regardless of the assigned problem after approximately 25 attempts. We term this *concept fixation.* It was resolved by eliminating history accumulation: each cycle starts from a fresh prompt with knowledge persisted in files.
 
-**5.2.1 Context window degradation.** Beginning at attempt 18, the model began generating Kadane's algorithm code regardless of the assigned problem. This occurred when the teacher transitioned from max_subarray_sum to two_sum — the accumulated conversation history caused the model to fixate on its most recently successful pattern. We term this failure mode *concept fixation*.
+**Honesty fabrication.** The student occasionally generated fictional debugging narratives, claiming to have identified and fixed errors that did not occur. The teacher's honesty grading dimension (0-10) partially addresses this, but it remains a challenge for training data quality.
 
-The degradation is detectable through three signals: (1) the assigned problem function name does not appear in the generated code, (2) teacher scores collapse to 1-2 from a prior range of 5-9, and (3) explicit corrective instructions in the problem statement have no effect ("THIS IS NOT KADANE'S ALGORITHM"). The teacher correctly diagnosed this condition and terminated the generation.
+**Curriculum stagnation.** The teacher assigned the same problem (group_by_sign) for 51 consecutive attempts due to context bloat in the teacher's session. Resolved by killing and restarting the teacher session before each grading cycle, and by adding supervisor oversight.
 
-This finding motivated a fundamental architectural change: elimination of conversation history accumulation in favor of stateless cycles with file-based knowledge persistence (see Section 3.2).
+### 5.4 Main Experiment Results
 
-**5.2.2 Curation.** Of the 35 traces, 27 (77.1%) were curated for training. The 8 discarded traces consisted of 4 wrong-problem submissions from the context contamination period and 4 empty or mechanically broken submissions. The estimated total training corpus is approximately 24,300 tokens across 27 examples.
+*Pending. Protocol defined. Experiments not yet run.*
 
-### 5.3 Generation 0: Fine-Tuning
-
-Training converged in 125 iterations (25.9 minutes):
-
-| Iteration | Training Loss | Validation Loss |
-|-----------|--------------|-----------------|
-| 1 | — | 2.100 |
-| 5 | 1.387 | — |
-| 10 | 0.657 | — |
-| 20 | 0.119 | — |
-| 25 | 0.249 | 0.269 |
-| 50 | 0.051 | 0.361 |
-| 125 | 0.061 | 0.368 |
-
-The gap between training and validation loss at convergence (0.061 vs 0.368) suggests mild overfitting, which is expected given the small dataset of 25 training examples.
-
-### 5.4 Post-Training Evaluation
-
-| # | Category | Baseline | Gen 0 | Change |
-|---|----------|----------|-------|--------|
-| 1 | Strings | FAIL | PASS | +1 |
-| 2 | Mathematics | FAIL | PASS | +1 |
-| 3 | Sorting | PASS | PASS | 0 |
-| 4 | Searching | PASS | FAIL | -1 |
-| 5 | Recursion | FAIL | PASS | +1 |
-| 6 | Dynamic programming | FAIL | PASS | +1 |
-| 7 | Graphs | FAIL | PASS | +1 |
-| 8 | Data structures | FAIL | FAIL | 0 |
-| 9 | Simulation | FAIL | FAIL | 0 |
-| 10 | Open-ended | FAIL | PASS | +1 |
-| | **Total** | **2/10** | **7/10** | **+5** |
-
-The fine-tuned model solves 5 previously unsolvable problems while maintaining performance on sorting and experiencing a single regression on binary search.
+| Condition | Score (/100) | Categories Improved | Notes |
+|-----------|-------------|--------------------|----|
+| E1: Baseline | — | — | |
+| E2: Prompt-only | ~20 (projected from 4/20 sample) | — | |
+| E3: Self-play + LoRA (gen 0) | — | — | |
+| E3: Self-play + LoRA (gen 1) | — | — | |
+| E3: Self-play + LoRA (gen 2) | — | — | |
+| E4: Random curriculum | — | — | |
+| E5: Human solutions | — | — | |
 
 ---
 
 ## 6. Analysis
 
-### 6.1 Decomposing the Improvement
+*To be completed after experiments.*
 
-Careful examination of the 5 newly solved problems reveals that the improvement is not uniform in nature. We decompose it into two categories:
+### 6.1 Format Correction vs Algorithmic Improvement
 
-**Format correction (4 of 5 new passes).** Problems 1 (Reverse words), 2 (Prime factors), 6 (LCS), 7 (Connected components), and 10 (Flatten) all failed in the baseline due to the model emitting markdown code fences (` ```python `) as part of its output, which the Python interpreter rejects as a SyntaxError. After fine-tuning on examples demonstrating raw Python output without markdown formatting, the model ceased producing these artifacts. This is a systematic format correction rather than an algorithmic improvement — the underlying code logic may have been correct in the baseline, but was never executed due to the formatting error.
+All results will be decomposed into format improvements (model produces syntactically valid code where it previously emitted markdown artifacts) versus algorithmic improvements (model produces correct logic where it previously produced incorrect logic). The E2 prompt-only control establishes the ceiling for format-only improvement.
 
-**Algorithmic improvement (1 of 5 new passes).** Problem 5 (Fibonacci with memoization) failed in the baseline with an assertion error on `fib(45)`, indicating an incorrect or inefficient implementation. After fine-tuning, the model produces a correct memoized implementation. This represents a genuine gain in algorithmic capability, possibly acquired from training examples that demonstrated recursive and iterative patterns.
+### 6.2 Curriculum Effect
 
-This decomposition has important implications for interpreting the headline result. While the improvement from 2/10 to 7/10 is statistically significant (Fisher's exact test, one-tailed p = 0.035), the practical significance is more nuanced: the majority of gains reflect the model learning an output format convention rather than acquiring new problem-solving capability. Nevertheless, format correction is itself valuable — a model that produces syntactically valid code is strictly more useful than one that does not, regardless of the mechanism.
+Comparison of E3 (adaptive teacher) vs E4 (random problems) isolates the teacher's contribution. If E3 significantly outperforms E4, the adaptive curriculum — grounded in Liu et al.'s (2026b) easy-to-hard principle — provides measurable value.
 
-**Coverage gap.** The training data covered only 2 of the 10 benchmark categories directly (strings via count_vowels, mathematics via sum_digits). Sorting, searching, recursion, dynamic programming, graphs, data structures, simulation, and open-ended problems were absent from training. That the model solved problems in 4 of these 8 uncovered categories suggests that the format correction generalizes broadly.
+### 6.3 Self-Generated vs Human Data
 
-### 6.2 Regression Analysis
+Comparison of E3 vs E5 tests whether self-generated traces at the student's capability boundary are more effective than human-written reference solutions, as hypothesized by the self-play literature.
 
-Binary search, one of only 2 problems the baseline model solved, fails after fine-tuning. No search-related problems appeared in the 27 training examples. This is consistent with observations in the catastrophic forgetting literature (Kirkpatrick et al., 2017): LoRA adaptation can perturb capabilities not reinforced by training data, even when modifying only 0.048% of parameters.
+### 6.4 Multi-Generation Compounding
 
-The regression is notable because binary search requires precise index arithmetic (`lo`, `hi`, `mid` with exact boundary conditions), a pattern distinct from the iteration-based solutions that dominate the training data. Future generations should include search problems in training to prevent this class of regression.
-
-### 6.3 Statistical Significance
-
-We apply three tests to the benchmark improvement:
-
-| Test | Statistic | p-value | Interpretation |
-|------|-----------|---------|----------------|
-| Fisher's exact (one-tailed) | — | 0.035 | Significant at alpha = 0.05 |
-| Binomial (H0: p = 0.2) | — | < 0.001 | Highly significant |
-| McNemar's (paired, continuity-corrected) | chi² = 1.5 | 0.221 | Not significant |
-
-The Fisher's exact and binomial tests indicate the improvement is unlikely due to chance. McNemar's test, which accounts for the paired nature of the data (same 10 problems, before and after), does not reach significance due to the small sample size (n = 10) and the conservative continuity correction. We recommend interpreting the result as suggestive pending replication on a larger benchmark.
-
-### 6.4 Sample Efficiency
-
-The most striking aspect of the result is the ratio of training examples to benchmark improvement. Comparable code instruction-tuning approaches require orders of magnitude more data:
-
-| System | Training Examples | Benchmark Improvement | Examples per +1% |
-|--------|------------------|----------------------|-------------------|
-| WizardCoder (Luo et al., 2023) | 20,000 | +15% HumanEval | ~1,333 |
-| Magicoder (Wei et al., 2023) | 75,000 | +20% HumanEval | ~3,750 |
-| OpenCodeInterpreter (Zheng et al., 2024) | 68,000 | +25% HumanEval | ~2,720 |
-| Forge (this work) | 27 | +50% (custom benchmark) | ~0.54 |
-
-The comparison is imprecise — these systems use different models, benchmarks, and data generation methods — but the three-order-of-magnitude difference in data requirements warrants explanation. We hypothesize three factors:
-
-1. The training examples are generated by the student itself and thus lie exactly on the decision boundary of the model's current capability. External datasets may contain many examples that are either too easy (already in the model's capability) or too hard (beyond what LoRA can bridge).
-
-2. The teacher's adaptive curriculum ensures that each example targets a specific weakness, maximizing information gain per example. This is consistent with Liu et al. (2026), who identify "proactive information seeking" as a key principle for sustained self-improvement.
-
-3. The dominant improvement mechanism is format correction (Section 6.1), which may require fewer examples to learn than novel algorithmic capabilities. A single training example demonstrating raw Python output without markdown fences may be sufficient to correct a systematic formatting error.
-
-### 6.5 Inference Efficiency
-
-The fine-tuned model completes the 10-problem benchmark in 897 seconds (15.0 minutes), compared to 1,579 seconds (26.3 minutes) for the baseline — a 43% reduction in total inference time. This improvement likely reflects shorter `<think>` blocks in the fine-tuned model, consistent with the format correction hypothesis: the model learned to produce code more directly.
-
-### 6.3 Failure Modes
-
-We identify four failure modes specific to this system:
-
-1. **Context window poisoning** (Section 5.2): Accumulated conversation history causes the model to fixate on previously successful patterns regardless of the current problem. Resolved by stateless context design.
-
-2. **Concept fixation**: Related to context poisoning — once the student learns a strong pattern (e.g., Kadane's algorithm), it over-applies it to unrelated problems.
-
-3. **Honesty fabrication**: The student occasionally generates fictional debugging narratives, claiming to have identified and fixed errors that did not occur. The teacher's honesty grading dimension partially mitigates this.
-
-4. **Token budget misallocation**: The Qwen 3.5 "thinking" model generates extensive internal reasoning in `<think>` blocks, leaving insufficient tokens for complete code output.
-
-### 6.4 Teacher Effectiveness
-
-The teacher agent provides value beyond simple pass/fail grading:
-
-- **Adaptive curriculum**: Problems are sequenced by difficulty based on student performance, ensuring the student operates near the boundary of its ability
-- **Diagnostic feedback**: The teacher identifies specific weaknesses (e.g., "your edge case handling missed empty lists") rather than generic encouragement
-- **Honesty enforcement**: Grading the honesty dimension incentivizes accurate self-reporting, which improves training data quality
-
-### 6.5 Cost
-
-| Resource | Cost |
-|----------|------|
-| Hardware | Apple M4 24GB (consumer laptop) |
-| Teacher API usage | ~50 grading calls ≈ $2.50 |
-| Student inference | Local (MLX, free) |
-| Fine-tuning | Local (MLX, free) |
-| Wall-clock time | ~9 hours (8h practice + 26min training) |
+If E3 is run for 3 generations, does improvement compound? The self-play theory (Liu et al., 2026) predicts 2-3 iterations before plateau for systems without capacity growth.
 
 ---
 
-### 6.5 Generation 1: Preliminary Observations
+## 7. Discussion
 
-Generation 1 uses the fine-tuned model (base + Gen 0 LoRA adapter) for both practice and learning. At time of writing, 11 attempts have been completed with a pass rate of 7/11 (64%).
+### 7.1 Positioning
 
-Notable observations relative to Generation 0:
+This work is not competitive with GASP, Code-A1, or Sol-Ver on benchmark performance — those systems use GPU clusters and larger models. Our contribution is the complete, reproducible system on consumer hardware, the controlled experimental design, and the honest analysis of what improvement actually consists of.
 
-| Metric | Gen 0 (first 11) | Gen 1 (first 11) |
-|--------|-------------------|-------------------|
-| Pass rate | 11/11 (100%) | 7/11 (64%) |
-| Distinct problems | 4 | 6 |
-| Mean time per attempt | 13.5 min | 4.9 min |
-| Context contamination | None | None |
+### 7.2 The Format Correction Finding
 
-The lower pass rate in Gen 1 is attributable to two factors. First, the teacher assigns harder problems earlier, having calibrated to Gen 0's performance. Second, a fine-tuning artifact was observed: the model internalized an incorrect vowel set representation (`"aEiOu"` with mixed case) that caused 3 consecutive failures on count_vowels before self-correction. This demonstrates that fine-tuning on imperfect data can introduce novel failure modes.
+The pilot finding that 80% of benchmark gains were format correction has practical implications. Before investing in expensive RL or fine-tuning pipelines, practitioners should check whether a simple output format instruction in the system prompt resolves most failures. The E2 control makes this check explicit.
 
-The 2.7x speedup in inference time (4.9 min vs 13.5 min per attempt) is consistent with the format correction observed in the benchmark — the fine-tuned model generates less preamble and more direct code.
+### 7.3 Failure Mode Taxonomy
 
-The student successfully attempted two_sum with a correct hash map approach in Gen 1 (attempt 8), reaching a concept that Gen 0 could not attempt due to context contamination. Though the attempt failed on an edge case, it represents genuine progress in conceptual coverage.
+Context poisoning, concept fixation, honesty fabrication, and curriculum stagnation are failure modes specific to online self-play with small models. These are absent from the STaR/SPIN literature because those systems use batch offline training. Our stateless cycle design and supervisor oversight are engineering solutions that may generalize to other online self-play systems.
 
----
+### 7.4 Cost and Accessibility
 
-## 7. Limitations
-
-Several limitations constrain the generalizability of these results:
-
-1. **Non-standard benchmark.** Our 10-problem benchmark is custom-designed and not directly comparable to established benchmarks such as HumanEval (Chen et al., 2021), MBPP (Austin et al., 2021), or LiveCodeBench (Jain et al., 2024). While it covers 10 algorithmic categories, the small sample size (n=10) limits statistical power — McNemar's test does not reach significance at p < 0.05. Evaluation on standard benchmarks is necessary to establish comparability with prior work.
-
-2. **Format correction dominates.** As discussed in Section 6.1, 4 of 5 benchmark improvements reflect the model learning to suppress markdown formatting rather than acquiring new algorithmic capability. The headline result (2/10 → 7/10) overstates the depth of learning when interpreted as algorithmic improvement.
-
-3. **Single generation.** We report results from one fine-tuning cycle. The self-play literature suggests 2-3 iterations before diminishing returns (Chen et al., 2024; Hosseini et al., 2024), but whether improvement compounds in our setting remains untested. Preliminary Generation 1 data suggests the fine-tuned model may introduce novel failure modes (Section 6.5).
-
-4. **Teacher bias.** The Claude model serving as teacher may introduce systematic biases in problem design, grading, and feedback that favor certain solution patterns. No human validation of teacher grades or curriculum decisions was performed.
-
-5. **Hardware constraints.** The 24GB memory limit restricts training context to 512 tokens and LoRA to 4 layers, well below the configurations recommended by Biderman et al. (2024). Higher rank and more layers may yield stronger results on hardware with more memory.
-
-6. **Regression risk.** The binary search regression demonstrates that LoRA fine-tuning on a narrow dataset can degrade unrepresented capabilities, consistent with Biderman et al. (2024). Training data diversity is critical for mitigating this risk in future generations.
-
-7. **Data contamination uncertainty.** Although the benchmark problems were not included in training, the base model (Qwen 3.5 4B) may have seen similar problems during its original pretraining. We cannot fully rule out that fine-tuning activates latent knowledge from pretraining rather than teaching genuinely new capabilities.
+The system costs approximately $2.50 in Claude API usage and runs entirely on a consumer laptop. In an era where competitive self-play research requires GPU clusters, a reproducible $2.50 experiment lowers the barrier to entry for self-improvement research.
 
 ---
 
-## 8. Future Work
+## 8. Limitations
 
-Several directions merit investigation:
+1. **Custom benchmark.** 100 original problems, not HumanEval or MBPP. Results are not directly comparable to published work. Future work should include standard benchmarks.
 
-- **Multi-generation compounding**: Does iterative fine-tuning across generations produce continued improvement, or does the model converge after one cycle?
-- **Regression mitigation**: Including diverse problem types in each generation's training data to prevent skill degradation on unrepresented categories
-- **Longer training contexts**: Scaling sequence length beyond 512 tokens through gradient accumulation or memory-efficient attention
-- **Benchmark expansion**: A larger benchmark (50+ problems) for more reliable measurement of improvement
-- **Student metacognition**: Whether the model's periodic self-reflection (metacognition.md) measurably affects learning rate
-- **Cross-architecture transfer**: Whether training data generated by one model can improve a model of different architecture or scale
-- **Curriculum optimization**: Systematic comparison of teacher strategies (e.g., spiral curriculum vs. linear progression)
+2. **Single model.** Results from Qwen3-1.7B may not generalize to other architectures or scales.
+
+3. **Teacher bias.** Claude as teacher may introduce systematic biases in grading and curriculum design that favor certain patterns.
+
+4. **Data contamination uncertainty.** Qwen3-1.7B may have encountered similar problems during pretraining. Fine-tuning may activate latent knowledge rather than teaching new capability.
+
+5. **Apple Silicon specific.** MLX training pipeline is specific to Apple hardware. Reproducibility on other platforms requires porting to PyTorch/CUDA.
+
+6. **No standard benchmark evaluation.** HumanEval/MBPP evaluation would strengthen comparability.
 
 ---
 
 ## 9. Conclusion
 
-We demonstrate that a 4-billion parameter language model can measurably improve its Python programming ability through autonomous practice and LoRA fine-tuning on self-generated data. Starting from a baseline of 2/10 on a held-out benchmark, the model achieves 7/10 after a single generation of training comprising 27 curated examples and 25.9 minutes of fine-tuning on consumer hardware.
+*To be completed after experiments.*
 
-The improvement generalizes across problem categories, including categories not present in the training data. This suggests the model acquires general code generation competence — structured output, edge case handling, token efficiency — rather than memorizing specific solutions.
+We will report: (a) whether LoRA fine-tuning on self-generated traces improves benchmark score above the prompt-only control, (b) whether the adaptive curriculum outperforms random problem selection, (c) whether self-generated data outperforms human-written solutions, and (d) the decomposition of improvement into format correction versus algorithmic learning.
 
-The total cost of the experiment is approximately $2.50 in API usage for the teacher agent, with all other computation performed locally on an Apple M4 laptop. The complete system, including all experimental data and training artifacts, is available as open source.
+Regardless of the magnitude of improvement, we contribute a complete, reproducible system design, a controlled experimental protocol, and a taxonomy of failure modes for small-model self-play — findings that are useful to the field independent of the headline number.
 
 ---
 
 ## References
 
-Bai, Y., et al. (2022). Constitutional AI: Harmlessness from AI Feedback. *arXiv:2212.08073*.
+Biderman, D., et al. (2024). LoRA Learns Less and Forgets Less. *TMLR (Featured).* arXiv:2405.09673.
 
-Bengio, Y., et al. (2009). Curriculum Learning. *ICML 2009*.
+Chen, Z., et al. (2024). SPIN: Self-Play Fine-Tuning Converts Weak Language Models to Strong. *ICML 2024.* arXiv:2401.01335.
 
-Biderman, D., et al. (2024). LoRA Learns Less and Forgets Less. *TMLR 2024 (Featured)*. arXiv:2405.09673.
+Hosseini, A., et al. (2024). V-STaR: Training Verifiers for Self-Taught Reasoners. *COLM 2024.* arXiv:2402.06457.
 
-Chen, M., et al. (2021). Evaluating Large Language Models Trained on Code. *arXiv:2107.03374*.
+Hu, E. J., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022.*
 
-Chen, Z., et al. (2024). Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models. *ICML 2024*. arXiv:2401.01335.
+Jana, S., et al. (2026). GASP: Guided Asymmetric Self-Play for Coding LLMs. arXiv:2603.15957.
 
-DeepSeek (2025). DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. *arXiv:2501.12948*.
+Liu, W., et al. (2026). Self-Play Only Evolves When Self-Synthetic Pipeline Ensures Learnable Information Gain. arXiv:2603.02218.
 
-Dettmers, T., et al. (2023). QLoRA: Efficient Finetuning of Quantized Language Models. *NeurIPS 2023*.
+Liu, C., et al. (2026b). A Task-Centric Theory for Iterative Self-Improvement with Easy-to-Hard Curricula. arXiv:2602.10014.
 
-Gunasekar, S., et al. (2023). Textbooks Are All You Need. *arXiv:2306.11644*.
+Luo, Z., et al. (2023). WizardCoder: Empowering Code LLMs with Evol-Instruct. *ICLR 2024.* arXiv:2306.08568.
 
-Guo, D., et al. (2024). DeepSeek-Coder: When the Large Language Model Meets Programming. *arXiv:2401.14196*.
+Park, J., et al. (2026). MeSP: Memory-Efficient Structured Backpropagation for On-Device LLM Fine-Tuning. arXiv:2602.13069.
 
-Hosseini, A., et al. (2024). V-STaR: Training Verifiers for Self-Taught Reasoners. *arXiv:2402.06457*.
+Wang, A., et al. (2026). Code-A1: Adversarial Evolving of Code LLM and Test LLM via RL. arXiv:2603.15611.
 
-Hu, E. J., et al. (2022). LoRA: Low-Rank Adaptation of Large Language Models. *ICLR 2022*.
+Wei, Y., et al. (2023). Magicoder: Empowering Code Generation with OSS-Instruct. *ICML 2024.* arXiv:2312.02120.
 
-Hui, B., et al. (2024). Qwen2.5-Coder Technical Report. *arXiv:2409.12186*.
+Yang, H., et al. (2026). Self-Improvement of Large Language Models: A Technical Overview. arXiv:2603.25681.
 
-Kirkpatrick, J., et al. (2017). Overcoming Catastrophic Forgetting in Neural Networks. *PNAS, 114*(13), 3521-3526.
+Zelikman, E., et al. (2022). STaR: Bootstrapping Reasoning with Reasoning. *NeurIPS 2022.*
 
-Le, H., et al. (2022). CodeRL: Mastering Code Generation through Pretrained Models and Deep Reinforcement Learning. *NeurIPS 2022*. arXiv:2207.01780.
-
-Li, R., et al. (2023). StarCoder: May the Source Be with You! *arXiv:2305.06161*.
-
-Li, Y., et al. (2022). Competition-Level Code Generation with AlphaCode. *Science, 378*(6624), 1092-1097.
-
-Liu, J., et al. (2023). RLTF: Reinforcement Learning from Unit Test Feedback. *TMLR*. arXiv:2307.04349.
-
-Liu, W., et al. (2026). Self-Play Only Evolves When Self-Synthetic Pipeline Ensures Learnable Information Gain. *arXiv:2603.02218*.
-
-Luo, Z., et al. (2023). WizardCoder: Empowering Code Large Language Models with Evol-Instruct. *ICLR 2024*. arXiv:2306.08568.
-
-Madaan, A., et al. (2023). Self-Refine: Iterative Refinement with Self-Feedback. *arXiv:2303.17651*.
-
-MLX Contributors (2023). MLX: An Array Framework for Apple Silicon. *Apple Machine Learning Research*.
-
-Rozière, B., et al. (2023). Code Llama: Open Foundation Models for Code. *arXiv:2308.12950*.
-
-Silver, D., et al. (2016). Mastering the Game of Go with Deep Neural Networks and Tree Search. *Nature, 529*, 484-489.
-
-Tesauro, G. (1995). Temporal Difference Learning and TD-Gammon. *Communications of the ACM, 38*(3), 58-68.
-
-Wang, Y., et al. (2023). Self-Instruct: Aligning Language Models with Self-Generated Instructions. *ACL 2023*.
-
-Wei, Y., et al. (2023). Magicoder: Empowering Code Generation with OSS-Instruct. *ICML 2024*. arXiv:2312.02120.
-
-Yuan, W., et al. (2024). Self-Rewarding Language Models. *ICML 2024*. arXiv:2401.10020.
-
-Zelikman, E., et al. (2022). STaR: Bootstrapping Reasoning with Reasoning. *NeurIPS 2022*.
-
-Zheng, L., et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. *NeurIPS 2023*.
-
-Zheng, T., et al. (2024). OpenCodeInterpreter: Integrating Code Generation with Execution and Refinement. *arXiv:2402.14658*.
+Zheng, T., et al. (2024). OpenCodeInterpreter. arXiv:2402.14658.
 
 ---
 
 ## Appendix A: System Configuration
 
-### A.1 Student Model
-
-| Parameter | Value |
+| Component | Value |
 |-----------|-------|
-| Architecture | Qwen 3.5 4B (decoder-only transformer) |
-| Parameters | 4,205,750,272 |
-| Inference framework | MLX 0.31.1 (Metal GPU) |
-| Hardware | Apple M4, 24GB unified memory |
-| Inference memory | 8.4 GB |
+| Student model | Qwen/Qwen3-1.7B (general-purpose) |
+| Inference | MLX 0.31.1, Apple M4 24GB |
+| Training | mlx-lm LoRA, 4 layers, rank 16 |
+| Teacher | Claude via Claude Code CLI |
+| Benchmark | 100 problems, 10 categories, verified |
+| Cost | ~$2.50 Claude API |
 
-### A.2 LoRA Configuration
+## Appendix B: Benchmark Distribution
 
-| Parameter | Value |
-|-----------|-------|
-| Rank | 16 |
-| Target layers | 4 of 32 |
-| Trainable parameters | 2,029,568 (0.048%) |
-| Training framework | mlx-lm 0.31.1 |
-| Batch size | 1 |
-| Gradient checkpointing | Enabled |
-| Peak training memory | 15.6 GB |
-
-### A.3 Teacher Model
-
-| Parameter | Value |
-|-----------|-------|
-| Model | Claude (via Claude Code CLI) |
-| Grading dimensions | Reasoning, Correctness, Honesty (0-10 each) |
-| Session management | Fresh session per grading cycle |
-
-## Appendix B: Benchmark Problems
-
-See `benchmark/problems.json` in the repository for complete problem specifications including test assertions.
-
-## Appendix C: Data Availability
-
-All experimental data is available in the repository:
-
-- Raw traces: `generations/gen000/traces.jsonl`
-- Curated training data: `generations/gen000/curated.jsonl`
-- LoRA adapter: `generations/gen000/adapter/`
-- Benchmark results: `benchmark/results.json`
-- Student solutions: `workspace/solutions/`
-- Teacher decision log: `workspace/claude_notes.md`
+| Category | Easy | Medium | Hard | Total |
+|----------|------|--------|------|-------|
+| strings | 3 | 4 | 3 | 10 |
+| math | 3 | 4 | 3 | 10 |
+| arrays | 3 | 4 | 3 | 10 |
+| sorting | 3 | 4 | 3 | 10 |
+| searching | 3 | 4 | 3 | 10 |
+| recursion | 3 | 4 | 3 | 10 |
+| dynamic_programming | 3 | 4 | 3 | 10 |
+| graphs | 3 | 4 | 3 | 10 |
+| data_structures | 3 | 4 | 3 | 10 |
+| design | 2 | 5 | 3 | 10 |
+| **Total** | **29** | **41** | **30** | **100** |

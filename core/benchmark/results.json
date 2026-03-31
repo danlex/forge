@@ -1,1 +1,10 @@
-{}
+{
+  "E2_prompt_only_1.7B_sample20": {
+    "model": "Qwen/Qwen3-1.7B",
+    "method": "prompt engineering only (no fine-tuning)",
+    "score": 4,
+    "total": 20,
+    "projected": "20%",
+    "note": "First 20 problems only. Enhanced system prompt: output raw Python, no markdown."
+  }
+}
