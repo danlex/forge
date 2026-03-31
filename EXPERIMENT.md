@@ -1,91 +1,93 @@
-# Experimental Protocol
+# Experimental Protocol v2
 
 ## Research Question
 
-Can a 1.7B general-purpose language model improve its score on a 100-problem
-Python programming benchmark through autonomous practice and LoRA fine-tuning
-on self-generated data?
+How does self-play code learning scale with model size? What do models actually
+learn (format vs algorithms) at each scale? When does the teacher's curriculum
+matter?
 
-## Model
+## Models
 
-- Qwen3-1.7B (base, general-purpose, not code-specialized)
-- HuggingFace: `Qwen/Qwen3-1.7B`
-- Inference: MLX on Apple M4 24GB
+| Model | Size | Type | HumanEval (est.) |
+|-------|------|------|-----------------|
+| Qwen3-0.6B | 0.6B | General | ~20% |
+| Qwen3-1.7B | 1.7B | General | ~52% |
+| Qwen3.5-4B | 4B | General + thinking | ~63% |
+
+All general-purpose (not code-specialized) to isolate what self-play teaches.
 
 ## Benchmark
 
-100 Python problems, 10 categories × 10 problems (29 easy, 41 medium, 30 hard).
-Categories: strings, math, arrays, sorting, searching, recursion, DP, graphs,
-data structures, design. All tests verified passing. Problems are original
-(not from HumanEval/MBPP). File: `core/benchmark/problems.json`.
+100 Python problems. 10 categories × 10 problems (29 easy, 41 medium, 30 hard).
+All verified. Original problems (not HumanEval/MBPP).
 
-## Experiments
+## Experiments (per model size)
 
-### E1: Baseline
-Run benchmark on base Qwen3-1.7B. No adapter. Record score per category.
+| ID | Condition | Description |
+|----|-----------|-------------|
+| E1 | Baseline | Raw model, no prompt help |
+| E2 | Prompt-only | Enhanced system prompt ("output raw Python, no markdown") |
+| E3 | Self-play + LoRA | 50 attempts → curate → LoRA → benchmark (×3 runs) |
+| E4 | Random curriculum | Same as E3, random problems instead of adaptive teacher |
+| E5 | Human solutions | Train on reference solutions instead of self-generated |
 
-### E2: Prompt-only control
-Run benchmark with an improved system prompt (algorithm reference, code format
-instructions) but no fine-tuning. If this matches E3, fine-tuning adds nothing.
+## Measurements
 
-### E3: Self-play + LoRA (main experiment)
-1. Run 50 practice attempts with teacher-designed curriculum
-2. Curate traces (remove garbage, keep pass + fail-then-succeed arcs)
-3. LoRA fine-tune via MLX
-4. Run benchmark with adapter
-5. Repeat for 3 generations
+Per condition:
+- Benchmark score /100 with per-category breakdown
+- Decomposition: format fixes vs algorithmic improvements
+- Pass rate during practice (if applicable)
+- Training loss curve (if applicable)
+- Inference time
 
-### E4: Random curriculum control
-Same as E3 but problems are randomly selected (no adaptive teacher).
-If E3 >> E4, the teacher's curriculum matters. If E3 ≈ E4, it doesn't.
+Per model size:
+- At what difficulty level does improvement begin?
+- Which categories improve? Which don't?
+- What failure modes appear?
 
-### E5: Human-written solutions control
-Same as E3 but train on correct reference solutions from the benchmark's
-test field instead of self-generated traces. If E5 >> E3, self-generated
-data is worse than curated solutions. If E3 ≈ E5, self-play matches.
+## Key Comparisons
 
-## Measurements per generation
+1. **E3 vs E2** → Does fine-tuning add value beyond prompting? (per model size)
+2. **E3 vs E4** → Does adaptive curriculum matter? (per model size)
+3. **E3 vs E5** → Is self-generated data better than human data? (per model size)
+4. **E3(0.6B) vs E3(1.7B) vs E3(4B)** → Scaling law for self-play learning
+5. **Format % at each scale** → Does format correction dominate equally at all sizes?
 
-| Metric | Source | Purpose |
-|--------|--------|---------|
-| Benchmark score (X/100) | run_benchmark_mlx.py | Primary outcome |
-| Score per category (X/10) | run_benchmark_mlx.py | Where did it improve? |
-| Pass rate during practice | traces.jsonl | Is it learning within generation? |
-| First-try pass rate | traces.jsonl | Is it solving new problems? |
-| Curriculum diversity | metrics.py | Is teacher advancing? |
-| Training loss curve | finetune.py | Is model fitting the data? |
-| Inference time | run_benchmark_mlx.py | Is it getting more efficient? |
+## Statistical Tests
 
-## Statistical tests
+- McNemar's test per condition pair (n=100, paired)
+- Per-category Fisher's exact
+- Wilson confidence intervals
+- Holm-Bonferroni correction for multiple comparisons
+- 3 runs of E3 for error bars (mean ± std)
 
-- **McNemar's test** (paired): same 100 problems before/after. Appropriate for
-  binary outcomes on paired data.
-- **Fisher's exact test**: if McNemar's has low power.
-- **Per-category chi-square**: which categories improved?
-- **95% confidence intervals** on pass rate: Wilson score interval.
+## Falsification
 
-With n=100: a change from 20/100 to 30/100 gives McNemar's p ≈ 0.04 (significant).
+The hypothesis (self-play improves coding ability) is falsified if:
+- E3 ≤ E2 at ALL model sizes (prompting alone is sufficient)
+- E3 = E4 at ALL sizes (curriculum doesn't matter)
+- All improvement is format correction at ALL sizes (no algorithmic learning)
 
-## Reproducibility
+## What Would Make This SOTA
 
-Record for every run:
-- Model: exact HuggingFace ID + commit hash
-- MLX version: `pip show mlx mlx-lm`
-- Adapter: path + config
-- Benchmark: file hash `sha256sum core/benchmark/problems.json`
-- System: macOS version, chip, RAM
-- Timestamp
+1. First scaling study of self-play for code (0.6B → 1.7B → 4B)
+2. First controlled decomposition of format vs algorithmic improvement
+3. First replication of self-play code learning on consumer hardware
+4. First failure mode taxonomy for online small-model self-play
+5. All experiments reproducible for $2.50 per model size
 
-## Stopping criteria
+## Timeline
 
-- Each generation: 50 attempts or 10 consecutive failures
-- Experiment ends after 3 generations OR if benchmark score plateaus
-  (< 2 point improvement between generations)
+Each model requires ~12 hours:
+- E1 + E2: 4 hours (100 problems × 2 conditions)
+- E3 ×3: 24 hours (50 attempts + train + benchmark, 3 runs)
+- E4: 8 hours
+- E5: 4 hours
 
-## What would falsify the hypothesis?
+Total: ~40 hours per model, ~120 hours for all three.
+Can run in parallel if memory allows (0.6B + 1.7B simultaneously).
 
-- E3 score ≤ E1 score (fine-tuning didn't help)
-- E3 score ≤ E2 score (prompting alone is enough)
-- E3 score ≤ E4 score (adaptive curriculum doesn't matter)
-- Score improves but only on categories present in training data
-  (no generalization, just memorization)
+## Venue Target
+
+ICLR 2026 Workshop on Recursive Self-Improvement (April 26-27, Rio)
+— if deadline allows, otherwise: NeurIPS 2026 workshops
