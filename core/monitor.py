@@ -82,19 +82,6 @@ def get_generation():
 
 
 
-def model_name():
-    try:
-        result = subprocess.run(
-            ["docker", "inspect", "forge", "--format",
-             "{{range .Config.Env}}{{println .}}{{end}}"],
-            capture_output=True, text=True, timeout=5,
-        )
-        for line in result.stdout.split("\n"):
-            if line.startswith("FORGE_MODEL="):
-                return line.split("=", 1)[1]
-    except Exception:
-        pass
-    return "unknown"
 
 
 def extract_problem_title(goal_text):

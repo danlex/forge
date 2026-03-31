@@ -13,8 +13,8 @@ import time
 
 MODEL_NAME = os.environ.get("FORGE_MODEL", "Qwen/Qwen3-1.7B")
 ADAPTER_PATH = os.environ.get("FORGE_ADAPTER", None)
-WORKSPACE = os.environ.get("FORGE_WORKSPACE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "student"))
-CORE_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "core", "laws.md")
+WORKSPACE = os.environ.get("FORGE_WORKSPACE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "student"))
+CORE_MD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "laws.md")
 
 # MLX model (loaded once)
 _model = None

@@ -9,7 +9,7 @@ analyze results, and improve the three autonomous agents.
 Forge is a self-improving AI with three agents:
 
 - **Student (Forge)**: Qwen 3.5 4B via MLX. Solves Python problems. Runs in tmux pane 2.
-  Identity: `workspace/student_soul.md` (copied to `workspace/soul.md`)
+  Identity: `student/soul.md` (copied to `student/soul.md`)
   Code: `seed.py`
 
 - **Teacher**: Claude Code in tmux pane 1. Grades attempts, designs curriculum.
@@ -67,9 +67,9 @@ tmux session "forge":
 ## Communication
 
 ```
-Student → Teacher:   workspace/questions.txt  (status.md = "question")
-Teacher → Student:   workspace/answers.txt    (status.md = "working")
-Teacher → Supervisor: workspace/escalations.txt
+Student → Teacher:   student/questions.txt  (status.md = "question")
+Teacher → Student:   student/answers.txt    (status.md = "working")
+Teacher → Supervisor: student/escalations.txt
 Supervisor → Teacher: tmux send-keys to pane 1
 Ticker → Supervisor:  tmux send-keys to pane 0
 ```
