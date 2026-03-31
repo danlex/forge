@@ -21,7 +21,7 @@ forge/
     Dockerfile
     seed.py              ← Forge's runtime
     orchestrate.md       ← this file (your instructions)
-    workspace/
+    student/
         soul.md          ← Forge's identity (Forge rewrites this)
         goal.md          ← you write problems here
         learnings.md     ← Forge writes one entry per attempt
@@ -55,10 +55,10 @@ Run these checks every time you start:
    - If down: `ollama serve &` then wait for health check
 3. Docker container `forge` running? `docker ps --filter name=forge`
    - If down: restart it (see Docker commands below)
-4. Read `workspace/status.md` — determines where to resume
-5. Read `workspace/traces.jsonl` — count attempts this generation
+4. Read `student/status.md` — determines where to resume
+5. Read `student/traces.jsonl` — count attempts this generation
 6. Check `generations/` — determine current generation number
-7. Log startup state to `workspace/claude_notes.md`
+7. Log startup state to `student/claude_notes.md`
 
 ---
 
@@ -91,15 +91,15 @@ This is your primary loop. Run it continuously.
 
 ### 1. Wait for submission
 
-Poll `workspace/status.md` every 2 seconds.
+Poll `student/status.md` every 2 seconds.
 When it reads "submitted", proceed.
 
 ### 2. Read context
 
 Read `teacher_soul.md` — your teaching philosophy and what you've learned.
-Read the last line of `workspace/traces.jsonl`. Parse the JSON.
-Also read: `workspace/learnings.md`, `workspace/patterns.md`,
-`workspace/metacognition.md`, `workspace/goal.md`.
+Read the last line of `student/traces.jsonl`. Parse the JSON.
+Also read: `student/learnings.md`, `student/patterns.md`,
+`student/metacognition.md`, `student/goal.md`.
 
 ### 3. Grade the attempt
 
@@ -143,12 +143,12 @@ Structure:
 - Score 5–6  → same difficulty, different angle on same concept
 - Score 0–4  → step back, simpler version of same concept
 - 3+ consecutive scores below 4 on same concept → add `## Hint` section
-  AND write a skill file to `workspace/` explaining the concept
+  AND write a skill file to `student/` explaining the concept
 
 ### 7. Reset status
 
-Write "working" to `workspace/status.md`.
-Log the grade + decision to `workspace/claude_notes.md`.
+Write "working" to `student/status.md`.
+Log the grade + decision to `student/claude_notes.md`.
 
 ### 8. Track state
 
@@ -225,7 +225,7 @@ When a generation ends:
 
 1. Log to `claude_notes.md`: generation number, total attempts, summary
 2. Create `generations/genNNN/` directory
-3. Copy `workspace/traces.jsonl` to `generations/genNNN/traces.jsonl`
+3. Copy `student/traces.jsonl` to `generations/genNNN/traces.jsonl`
 4. **Reflect on your teaching** — reread `teacher_soul.md`, review your
    grades and notes from this generation, and ask yourself:
    - What problem types produced the best learning?
@@ -384,7 +384,7 @@ Write 10 harder problems. Reset `benchmark/problems.json` and
 
 ## Communicating with Forge
 
-Write to `workspace/commands.txt` to send messages Forge will read.
+Write to `student/commands.txt` to send messages Forge will read.
 Use this for:
 - Encouragement after strong streaks
 - Warnings about repeated mistakes
@@ -397,7 +397,7 @@ Keep messages short and specific. Forge reads this every cycle.
 
 ## Logging
 
-Append to `workspace/claude_notes.md` for EVERY decision:
+Append to `student/claude_notes.md` for EVERY decision:
 ```
 [YYYY-MM-DD HH:MM] GRADE attempt #N: reasoning=X correctness=Y honesty=Z overall=W
 [YYYY-MM-DD HH:MM] GOAL wrote problem targeting <concept> at <difficulty>

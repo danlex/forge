@@ -73,15 +73,6 @@ def get_generation():
     return 0
 
 
-def container_status():
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=forge", "--format", "{{.Status}}"],
-            capture_output=True, text=True, timeout=5,
-        )
-        status = result.stdout.strip()
-        if not status:
-            return "not created", RED
         if status.startswith("Up"):
             return status, GREEN
         return status, YELLOW
@@ -89,13 +80,6 @@ def container_status():
         return "unknown", RED
 
 
-def ollama_status():
-    try:
-        import urllib.request
-        urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2)
-        return "running", GREEN
-    except Exception:
-        return "down", RED
 
 
 def model_name():
@@ -190,8 +174,6 @@ def render():
     learnings = read_file("learnings.md")
     patterns = read_file("patterns.md")
     meta = read_file("metacognition.md")
-    c_status, c_color = container_status()
-    o_status, o_color = ollama_status()
     model = model_name()
 
     attempt_count = len(traces)
@@ -240,7 +222,7 @@ def render():
     prog_bar = f"{GREEN}{'█' * prog_filled}{DIM}{'░' * (prog_width - prog_filled)}{RESET}"
 
     line(f"{indent}{BOLD}Gen {gen}{RESET}  {prog_bar}  {attempt_count}/{max_attempts} attempts  {BOLD}Model:{RESET} {CYAN}{model}{RESET}")
-    line(f"{indent}Status: {s_color}{status_icon} {status}{RESET}    Container: {c_color}{c_status}{RESET}    Ollama: {o_color}{o_status}{RESET}")
+    line(f"{indent}Status: {s_color}{status_icon} {status}{RESET}    
 
     # ========== Current Problem ==========
     section("Current Problem")

@@ -61,7 +61,6 @@ def run_code(code):
 
 def main():
     # Kill Ollama to free GPU memory
-    subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True)
     time.sleep(3)
 
     with open(os.path.join(FORGE_DIR, "benchmark", "problems.json")) as f:
